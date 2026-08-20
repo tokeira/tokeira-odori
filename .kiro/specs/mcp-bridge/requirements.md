@@ -32,9 +32,11 @@ spec freezes first. Ships behind the `preview` feature (descope ladder rung 3).
   activity ("the turn activity") by a provider.
 - **Attempt:** one execution of a turn activity. Attempts are monotonic per
   turn; a retry produces attempt N+1 and supersedes attempt N.
-- **Call id:** the harness-assigned tool-use id for one tool call. It is
-  persisted in the harness's own session history, so a resumed session
-  re-issues a pending call with the same id.
+- **Call id:** the harness-assigned tool-use id for one tool call, persisted
+  in the harness's own session history. Claude Code exposes it to the bridge
+  as `params._meta["claudecode/toolUseId"]` (verified live). Whether a
+  resumed session re-issues a pending call under the *same* id is
+  harness-behaviour, not a guarantee — see the sanctioned exception below.
 - **Invocation identity:** the triple (turn, attempt, call id) stamped on
   every bridged tool call. The registry keys on (turn, call id); the attempt
   is a fencing dimension, not an identity dimension.
@@ -68,14 +70,19 @@ Out of scope: the bridge exposing harness-*native* tools to the framework;
 resources/prompts/sampling MCP surfaces (tools only in v0); cross-run tool
 result sharing; the O2 turn loop and O3/O4 supervision internals.
 
-Sanctioned exception: the **regenerated-id residual** — if a tool executed but
-the harness died before persisting the `tool_use` block, the retried attempt
+Sanctioned exception: **regenerated call ids on harness-death recovery** —
+verified live for Claude Code (spike, crash-mid-tool-call experiment): when
+the harness dies mid-await, it closes the pending call in its session history
+as a failed tool result ("Connection closed"), and the resumed model
 regenerates the call under a fresh id no key can connect to the first
-execution. The tool runs again. No bridge design closes this without vendor
-cooperation (the id is born inside the harness); the contract is that
-framework tools are idempotent or compensatable, using the injected
-idempotency key (Requirement 2.4). See design §"Idempotency" and open
-question Q3.
+execution. On this harness the regenerated-id path is therefore the *main*
+harness-death recovery path, not a narrow residual; same-id dedupe still
+covers same-attempt MCP client retries and any resume that re-issues without
+regeneration. No bridge design closes this without vendor cooperation (the id
+is born inside the harness); the contract is that framework tools are
+idempotent or compensatable, using the injected idempotency key
+(Requirement 2.4). Whether the workflow additionally bounds re-execution is
+Q3/Q6 — a decision this evidence sharpens but does not make.
 
 ## Evidence From Current Code
 
@@ -96,9 +103,13 @@ question Q3.
   and registry live in; provider trait frozen EOD day 22); O3/O4 providers
   (spawn-time attachment); engine-repo T2 (`Engine::embedded()`); Temporal
   Rust SDK 0.7 update support (workspace pin, `temporalio-sdk = "0.7"`).
-- **Unverified assumptions, tracked:** call-id stability across session
-  resume per harness (Q2 — claude probe auth-blocked; Codex probe is lane
-  C's); Codex HTTP-MCP support (Q1).
+- **Harness identity behaviour (observed, Claude):** spike crash-mid-tool-call
+  experiment — `tools/call` carries the true tool-use id in
+  `params._meta["claudecode/toolUseId"]` plus a `progressToken`; the JSON-RPC
+  id is a per-connection counter; kill-mid-await → session records a failed
+  tool result and resume regenerates under a fresh id (Q2 answered for
+  Claude). Still open: Codex equivalents (Q1/Q2-codex, lane C) and whether
+  Claude's MCP client retries a timed-out call within one attempt.
 
 ## Contract Policy
 
@@ -286,11 +297,20 @@ Open questions held for Ian (numbering shared with `design.md`):
 - **Q1 — Codex transport:** HTTP MCP directly, or commit the stdio shim from
   day one? (Lane C's Codex-driver PoC answers; the shim is the fallback
   either way.)
-- **Q2 — Call-id stability on resume:** asserted from session-history
-  mechanics; verify live per harness before freeze. Claude probe is blocked
-  on the expired local CLI OAuth (PR #1 notes).
-- **Q3 — Second-level dedupe:** accept the regenerated-id residual (current
-  draft), or add args-hash heuristics with their wrong-dedupe risk?
+- **Q2 — Call-id stability on resume: ANSWERED for Claude** (spike
+  crash-mid-tool-call experiment): not stable across kill/resume — the
+  session closes the pending call as failed and the resumed model
+  regenerates under a fresh id; the bridge receives the true id via
+  `_meta["claudecode/toolUseId"]`. Registry semantics (Requirements 3.1–3.3)
+  stay as specified — same-id dedupe is still correct whenever ids do
+  re-present — but harness-death recovery on Claude flows through Q3/Q6
+  instead. Remaining: the Codex equivalent (lane C) and Claude's same-attempt
+  MCP-client-retry behaviour.
+- **Q3 — Second-level dedupe:** accept regenerated-id re-execution (current
+  draft; tool idempotency keys carry the weight), or add args-hash
+  heuristics with their wrong-dedupe risk? **Sharpened by the Q2 answer:**
+  on Claude this now governs the main harness-death recovery path, not an
+  edge case — worth deciding with that weight in mind.
 - **Q4 — Result size policy:** tool results ride updates → history → MCP.
   Cap-and-fail, or offload past a threshold — and to where, embedded?
 - **Q5 — Loopback auth depth:** per-run token (draft) or per-attempt tokens
