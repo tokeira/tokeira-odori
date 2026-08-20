@@ -89,7 +89,8 @@ Q3/Q6 — a decision this evidence sharpens but does not make.
 - **Execution model (authoritative):** launch plan "Twelve Days to Public"
   (scope contract + slice table) — run-loop-as-workflow / turn-as-activity,
   update/signal shipping in v0, `preview` as descope rung 3.
-- **Harness behaviour (observed):** `spikes/claude-driver/README.md` —
+- **Harness behaviour (observed):** the claude-driver spike, retired from
+  the tree (its README survives in git history via PRs #1/#3) —
   claude 2.1.220 ground truth: `--mcp-config`, `--allowedTools`, `--resume`,
   `--fork-session` present; stream events as liveness; failure classification
   4-tuple (exit code, result-event-arrived, `terminal_reason`, stderr); spawn

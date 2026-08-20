@@ -8,10 +8,6 @@ members = [
     "crates/odori-mcp-bridge",
 ]
 exclude = [
-    # Spikes are bounded throwaway probes with their own lockfiles (engine-repo
-    # convention): excluded so workspace builds, lints, and the finish bar never
-    # touch them.
-    "spikes/claude-driver",
     # The embedded integration harness depends on the engine repo; excluded so
     # that graph never expands or constrains the product workspace. Run with
     # `cargo test --manifest-path tests/embedded/Cargo.toml`.

@@ -8,8 +8,9 @@
 //! - **Claude** — headless Claude Code: `claude -p --output-format
 //!   stream-json`, one process per turn, sessions resumed by id on retry,
 //!   streaming events surfaced as activity heartbeats, exit codes mapped to a
-//!   retry taxonomy. (Event shapes and resume behaviour are ground-truthed by
-//!   `spikes/claude-driver`.)
+//!   retry taxonomy. (Event shapes and resume behaviour were ground-truthed
+//!   by the retired claude-driver spike; its findings live in the mcp-bridge
+//!   spec's evidence section and in this crate's flag rendering.)
 //! - **Codex** — `codex app-server` JSON-RPC as the transport, `codex exec
 //!   --json` as the documented fallback.
 //!
