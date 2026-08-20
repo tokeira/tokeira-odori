@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 odori-agents = { workspace = true }
+odori-mcp-bridge = { workspace = true, optional = true }
 temporalio-client = { workspace = true }
 temporalio-common = { workspace = true }
 temporalio-macros = { workspace = true }
@@ -18,6 +19,11 @@ temporalio-sdk = { workspace = true }
 temporalio-sdk-core = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
+[features]
+# The mcp-bridge descope boundary (spec Requirement 8): off = no listener,
+# no attachment injection, no bridge code on any path.
+preview = ["dep:odori-mcp-bridge", "odori-mcp-bridge/preview"]
 
 [lints]
 workspace = true

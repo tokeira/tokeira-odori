@@ -14,5 +14,15 @@ odori-providers = { workspace = true }
 odori-engine = { workspace = true }
 odori-mcp-bridge = { workspace = true }
 
+[dev-dependencies]
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+# Forwarding switch for the mcp-bridge (spec Requirement 8): enables the
+# bridge crate and the engine wiring together.
+preview = ["odori-engine/preview", "odori-mcp-bridge/preview"]
+
 [lints]
 workspace = true

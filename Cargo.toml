@@ -8,10 +8,6 @@ members = [
     "crates/odori-mcp-bridge",
 ]
 exclude = [
-    # Spikes are bounded throwaway probes with their own lockfiles (engine-repo
-    # convention): excluded so workspace builds, lints, and the finish bar never
-    # touch them.
-    "spikes/claude-driver",
     # The embedded integration harness depends on the engine repo; excluded so
     # that graph never expands or constrains the product workspace. Run with
     # `cargo test --manifest-path tests/embedded/Cargo.toml`.
@@ -44,6 +40,15 @@ temporalio-workflow = "0.7"
 
 anyhow = "1.0"
 async-trait = "0.1"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+# Property-based testing (dev-dependency tier): the mcp-bridge spec's
+# correctness properties P1-P7 are required PBT suites (engine repo pins the
+# same line).
+proptest = "1"
 futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

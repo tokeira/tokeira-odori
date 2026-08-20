@@ -9,9 +9,11 @@ state — is the only authority on whether a tool activity runs, and the harness
 only ever observes results already recorded in history.
 
 Behaviour sources: the launch plan's execution model (run loop = workflow,
-turn = activity, update/signal in v0); harness ground truth from
-`spikes/claude-driver/README.md` (claude 2.1.220) with Codex equivalents owed
-by lane C's PoC; the MCP specification for `tools/*` and progress
+turn = activity, update/signal in v0); harness ground truth from the
+claude-driver spike (claude 2.1.220; retired from the tree — its README
+survives in git history via PRs #1/#3, and its load-bearing findings are
+restated in `requirements.md` § Evidence) with Codex equivalents owed by
+lane C's PoC; the MCP specification for `tools/*` and progress
 notifications; requirements in `requirements.md` (this spec was authored
 design-first; the two documents are kept in sync).
 

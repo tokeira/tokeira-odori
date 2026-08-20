@@ -1,25 +1,36 @@
 //! The MCP bridge — durable tools reachable from inside a harness turn.
 //!
 //! A harness (Claude Code, Codex) mid-turn may call a tool the framework
-//! owns. That tool must execute durably — as a tokeira activity with its own
-//! retry policy — while the harness blocks awaiting the MCP response, inside
-//! a turn that is *itself* an activity. This crate will own that bridge:
+//! owns. That tool must execute durably — as a tokeira activity with its
+//! own retry policy — while the harness blocks awaiting the MCP response,
+//! inside a turn that is *itself* an activity. This crate is that bridge,
+//! implementing `.kiro/specs/mcp-bridge/`:
 //!
-//! - the **in-process MCP server** each harness subprocess is pointed at;
-//! - **tool-call → activity translation**: an incoming MCP `tools/call`
-//!   becomes an activity invocation, and the MCP response is the activity's
-//!   result;
-//! - **idempotency**: a retried turn replays its tool calls, so invocations
-//!   are deduplicated (turn attempt × call id) and replayed calls return the
-//!   recorded prior result instead of re-executing;
-//! - **timeout interplay**: harness-side MCP client timeouts versus
-//!   long-running activities, bridged with progress/keepalive;
-//! - the **failure taxonomy**: tool failure vs bridge failure vs harness
-//!   death mid-await, and crash-mid-turn recovery (turn retry + harness
-//!   session resume).
+//! - [`attach::Bridge`] — the in-process streamable-HTTP MCP server on
+//!   loopback, per-attempt bearer tokens, and the [`AttachmentSource`]
+//!   implementation the turn activities consume;
+//! - [`broker::CallBroker`] — `tools/call` → workflow update translation
+//!   with keepalive progress (record-before-respond is structural: only a
+//!   completed update's reply can be returned);
+//! - the workflow-side pieces (invocation registry, `tool_invoked` update
+//!   handler, `execute_tool` activity) live in `odori-agents`, which this
+//!   crate depends on — never the reverse (spec Requirement 8.5).
 //!
-//! The design is frozen in the `.kiro/specs/mcp-bridge/` spec (requirements,
-//! design, tasks) before implementation begins; the correctness properties
-//! stated there are binding on this crate. The
-//! `preview` feature is the descope boundary: bridge off, framework tools
-//! delegate to the harness's own tooling.
+//! The `preview` feature is the descope boundary (spec Requirement 8):
+//! with it off this crate compiles to nothing — no listener, no
+//! attachment, no bridge code on any path — and framework tools delegate
+//! to the harness's own tooling.
+//!
+//! [`AttachmentSource`]: odori_agents::provider::AttachmentSource
+
+#[cfg(feature = "preview")]
+pub mod attach;
+#[cfg(feature = "preview")]
+pub mod broker;
+#[cfg(feature = "preview")]
+mod server;
+
+#[cfg(feature = "preview")]
+pub use attach::{Bridge, BridgeConfig};
+#[cfg(feature = "preview")]
+pub use broker::{BridgeError, CallBroker, UpdateClient, WorkflowUpdateClient};

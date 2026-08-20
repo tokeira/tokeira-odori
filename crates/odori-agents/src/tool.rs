@@ -19,7 +19,23 @@ use thiserror::Error;
 /// Boxed future returned by tool handlers.
 pub type ToolFuture = Pin<Box<dyn Future<Output = Result<Value, ToolFailure>> + Send>>;
 
-type Handler = Arc<dyn Fn(Value) -> ToolFuture + Send + Sync>;
+type Handler = Arc<dyn Fn(ToolContext, Value) -> ToolFuture + Send + Sync>;
+
+/// Execution context handed to every tool handler: the durable identity of
+/// this invocation, usable directly as an idempotency key for the tool's
+/// own side effects (mcp-bridge spec, Requirement 2.4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ToolContext {
+    /// Workflow run id of the owning run.
+    pub run_id: String,
+    /// Zero-based turn index.
+    pub turn: u32,
+    /// Turn-activity attempt that carried the call.
+    pub attempt: u32,
+    /// The harness call id (the invocation's identity within the turn).
+    pub invocation_id: String,
+}
 
 /// A framework-owned tool: name, model-facing description, JSON Schema for
 /// arguments, execution policy, and the handler the mcp-bridge will run as
@@ -43,7 +59,7 @@ impl Tool {
         handler: F,
     ) -> Self
     where
-        F: Fn(Value) -> Fut + Send + Sync + 'static,
+        F: Fn(ToolContext, Value) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Value, ToolFailure>> + Send + 'static,
     {
         Self {
@@ -51,7 +67,7 @@ impl Tool {
             description: description.into(),
             input_schema,
             policy: ToolPolicy::default(),
-            handler: Arc::new(move |args| Box::pin(handler(args))),
+            handler: Arc::new(move |context, args| Box::pin(handler(context, args))),
         }
     }
 
@@ -84,8 +100,8 @@ impl Tool {
     /// Invoke the handler directly. The mcp-bridge's `execute_tool`
     /// activity is the intended caller; nothing in the `preview`-off path
     /// executes this.
-    pub fn invoke(&self, args: Value) -> ToolFuture {
-        (self.handler)(args)
+    pub fn invoke(&self, context: ToolContext, args: Value) -> ToolFuture {
+        (self.handler)(context, args)
     }
 }
 

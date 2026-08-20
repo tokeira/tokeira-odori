@@ -227,6 +227,51 @@ pub enum McpTransport {
     },
 }
 
+/// A source of per-turn MCP attachments — the seam the mcp-bridge
+/// implements without `odori-agents` depending on it (spec Requirement
+/// 8.5). With `preview` off no source exists and turns carry only their
+/// agent-declared tooling.
+pub trait AttachmentSource: std::fmt::Debug + Send + Sync + 'static {
+    /// The attachment for one turn, or `None` when the bridge declines
+    /// (e.g. the agent has no framework tools). `workflow_id` addresses the
+    /// run's workflow for the bridge's update path.
+    fn attachment_for(
+        &self,
+        workflow_id: &str,
+        identity: &TurnIdentity,
+        agent_name: &str,
+    ) -> Option<TurnAttachment>;
+}
+
+/// One turn's bridge attachment, merged into [`TurnTooling`] by the turn
+/// activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TurnAttachment {
+    /// The bridge's MCP server config (endpoint + bearer token).
+    pub mcp_server: McpServerConfig,
+    /// Harness MCP-timeout pin (spec Requirement 5.3).
+    pub mcp_timeout: Option<Duration>,
+    /// Fully qualified tool names (`mcp__{server}__{tool}`) to allow.
+    pub allowed_tools: Vec<String>,
+}
+
+impl TurnAttachment {
+    /// Assemble an attachment (the struct is `non_exhaustive`; this is the
+    /// out-of-crate constructor).
+    pub fn new(
+        mcp_server: McpServerConfig,
+        mcp_timeout: Option<Duration>,
+        allowed_tools: Vec<String>,
+    ) -> Self {
+        Self {
+            mcp_server,
+            mcp_timeout,
+            allowed_tools,
+        }
+    }
+}
+
 /// Sink for in-flight turn events.
 ///
 /// Lossy by design: emission never blocks the provider, and dropped events
