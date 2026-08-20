@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+odori-agents = { workspace = true }
 temporalio-client = { workspace = true }
 temporalio-common = { workspace = true }
 temporalio-macros = { workspace = true }

@@ -20,3 +20,9 @@ pub use odori_agents as agents;
 pub use odori_engine as engine;
 pub use odori_mcp_bridge as mcp_bridge;
 pub use odori_providers as providers;
+
+pub use odori_agents::{
+    Agent, AgentOutput, AgentRegistry, Guardrail, GuardrailVerdict, Json, Provider, Providers,
+    RunBudget, RunConfig, RunEnd, RunOutput, Runner, RunnerError, Tool, ToolFailure, ToolPolicy,
+};
+pub use odori_engine::{ConnectTarget, OdoriRuntime};

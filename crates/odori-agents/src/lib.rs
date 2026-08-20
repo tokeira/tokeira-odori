@@ -1,26 +1,42 @@
 //! Agent primitives — the surface a user of Odori programs against.
 //!
-//! This crate will own the framework's primitive set, borrowed deliberately
-//! from the OpenAI Agents SDK so the shape is already familiar:
+//! The primitive set is borrowed deliberately from the OpenAI Agents SDK so
+//! the shape is already familiar; the substrate underneath is what Odori
+//! adds. One run is one workflow ([`run::AgentRun`]); each harness turn the
+//! loop takes is one activity ([`run::TurnActivities`]); the loop itself is
+//! therefore replayable history, and a crashed run resumes from its last
+//! completed turn.
 //!
-//! - **`Agent`** — a named configuration: instructions, tools, handoffs,
-//!   guardrails, an output type, and a provider binding.
-//! - **`Runner`** — the run loop. One run is one workflow; each harness turn
-//!   the loop takes is one activity. The loop itself is therefore replayable
-//!   history, and a crashed run resumes from its last completed turn.
-//! - **`Tool`** — a typed, framework-owned capability. When the MCP bridge is
-//!   active, a tool call arriving mid-turn executes as a durable activity
-//!   (see `odori-mcp-bridge`); otherwise tools delegate to the harness's own
-//!   tooling.
-//! - **`Handoff`** — delegation to another agent, mapped to a child workflow
-//!   so the delegate's run is itself durable and individually inspectable.
-//! - **`Guardrail`** — input/output validation plus run budgets (turn caps,
-//!   token/cost ceilings) enforced by the runner.
-//! - **Typed outputs** — a run produces a deserialized, schema-checked value,
-//!   not a string.
-//! - **Sessions** — conversation history as first-class state. A session id
-//!   names the harness-side conversation; resuming a run resumes the session.
+//! - [`agent::Agent`] — a named configuration: instructions, provider
+//!   binding, tools, guardrails, output shape.
+//! - [`runner::Runner`] — the client surface: start runs, follow
+//!   conversations, fetch typed outputs.
+//! - [`tool::Tool`] — a typed, framework-owned capability; durable
+//!   execution arrives with the mcp-bridge (`.kiro/specs/mcp-bridge/`),
+//!   declarative delegation to harness tooling until then.
+//! - [`guardrail::Guardrail`] — deterministic input/output validation, plus
+//!   [`guardrail::RunBudget`] turn/cost caps enforced by the run loop.
+//! - [`output::AgentOutput`] — typed outputs: a run produces a value, not a
+//!   string.
+//! - [`provider::Provider`] — the frozen seam to model backends; the unit
+//!   is one harness turn.
 //!
 //! Nothing here talks to a model vendor directly: providers live in
-//! `odori-providers`, and durability comes from `odori-engine`. This crate
-//! stays pure surface — types, traits, and the runner's orchestration logic.
+//! `odori-providers`, and the embedded engine plus worker bootstrap live in
+//! `odori-engine`.
+
+pub mod agent;
+pub mod guardrail;
+pub mod output;
+pub mod provider;
+pub mod run;
+pub mod runner;
+pub mod tool;
+
+pub use agent::{Agent, AgentRegistry};
+pub use guardrail::{Guardrail, GuardrailVerdict, RunBudget};
+pub use output::{AgentOutput, Json};
+pub use provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
+pub use run::{AgentRun, Providers, RunConfig, RunEnd, RunOutput, TurnActivities};
+pub use runner::{Conversation, Runner, RunnerError, register_odori};
+pub use tool::{Tool, ToolFailure, ToolPolicy};

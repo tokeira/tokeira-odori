@@ -21,6 +21,8 @@
 //! Responses) — lives behind the `api-anthropic` / `api-openai` features:
 //! minimal internal loops for users without a subscription seat.
 //!
-//! The trait boundary this crate exports is what `odori-agents`' runner calls
-//! for each turn; it is frozen early (launch plan: EOD day 22) so provider
-//! implementations can proceed in parallel behind a stable seam.
+//! The seam this crate implements is `odori_agents::provider::Provider` —
+//! defined crate-side with the primitives (both ends of the seam need the
+//! agents crate's types, so defining it there keeps the graph acyclic) and
+//! frozen early (launch plan: EOD day 22) so provider implementations can
+//! proceed in parallel behind a stable surface.
