@@ -127,8 +127,20 @@ reference.
     - _Requirements: 7.1, 7.2, 7.4, 3.1, 3.2, 3.3, 4.2_
   - [ ] 14.2 Live-harness bridged turn (both providers, pinned versions)
     - One bridged tool call end-to-end per harness; ignored-by-default
-      (subscription quota); part of the launch dry-run checklist.
-    - _Requirements: 1.4, 1.5, 1.6, 1.7, 2.3_
+      (subscription quota); part of the launch dry-run checklist. Must
+      also observe the real harness MCP client against the bridge's SSE
+      responses — retry behaviour on timeout and whether a retried call
+      re-presents the same `_meta` call id (the scripted harness covers
+      only the protocol shape the spec commits to).
+    - _Requirements: 1.4, 1.5, 1.6, 1.7, 2.3, 3.2, 5.1_
+
+- [ ] 16. Token-directory eviction (`odori-mcp-bridge`)
+  - The attachment directory retains one entry per turn-attempt for the
+    process lifetime (deliberate while the run lives — stale tokens must
+    resolve to be *fenced*, not 401). Evict a run's entries when its
+    workflow reaches a terminal state; keep the fencing property (P4) and
+    the fenced-not-401 behaviour under test.
+  - _Requirements: 1.2, 1.3, 4.2_
 
 - [x] 15. Checkpoint: full finish bar green
   - `cargo +nightly fmt --all`; clippy `-D warnings`; nextest; doctests;
@@ -142,6 +154,7 @@ reference.
 - {1, 6} → 10 → 11
 - {6, 10} → 12 → 13
 - {3, 4, 5, 8, 9, 11, 13} → 14 → 15
+- 6 → 16 (post-v0 acceptable; before the service tier's long-lived processes)
 - External: O2 merged before 1; O3 merged before 10; engine-repo T2 available
   before 12/14; Q1 answered before 10.2 commits to a transport.
 
@@ -158,7 +171,9 @@ Ticked tasks landed in the O6 implementation PR. Still open, with cause:
   meanwhile by the update-handler behaviour and the server error-table
   units.
 - **14.2 Live-harness bridged turn** — lands behind the ignored-by-default
-  marker once O3 merges.
+  marker once O3 merges; carries the real-harness SSE/retry observation.
+- **16 Token-directory eviction** — the O6 PR's residual, filed here rather
+  than living only in the PR body.
 
 Decisions taken during implementation (mirrored in requirements.md):
 **Q4** closed as 256 KiB cap-and-fail (`BridgeConfig::max_result_bytes`,
