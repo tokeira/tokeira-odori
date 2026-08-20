@@ -19,14 +19,16 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
-authors = ["OpenAI"]
+authors = ["Ian Wilkinson <ianw1@mac.com>"]
 repository = "https://github.com/tokeira/tokeira-odori"
 
 [workspace.dependencies]
 # The Temporal Rust SDK is the worker SDK; the embedded tokeira engine speaks
-# the same Temporal contract over a loopback port. Vanilla crates.io pins —
-# no fork, no [patch] — by launch decision (the replay-guard fix, upstream
-# PR #1353, ships in this line).
+# the same Temporal contract in-process via
+# `ConnectionOptions::service_override` (an in-memory duplex — no TCP
+# listener, no port). Vanilla crates.io pins — no fork, no [patch] — by
+# launch decision (the replay-guard fix, upstream PR #1353, ships in this
+# line).
 temporalio-sdk = "0.7"
 temporalio-sdk-core = "0.7"
 temporalio-client = "0.7"
