@@ -33,7 +33,7 @@ design-first; the two documents are kept in sync).
 - Exposing harness-native tools to the framework; MCP resources/prompts/
   sampling surfaces; cross-run result sharing; any turn-loop or supervision
   internals beyond the seams named above.
-- Closing the regenerated-id residual (requirements, Target State): owned by
+- Closing regenerated-id re-execution (requirements, Target State): owned by
   tool idempotency contracts, not the bridge.
 
 ## Architecture
@@ -116,7 +116,8 @@ Streamable-HTTP MCP server on `127.0.0.1:0`; per-run bearer token check
 before anything else; `tools/list` from the turn's `Tool` set; `tools/call` →
 update via the Temporal client; keepalive scheduler emitting progress at a
 configured cadence, fed by activity heartbeats when present, synthesized
-otherwise.
+otherwise (Claude's `tools/call` supplies a `progressToken` to target —
+verified live).
 
 ```rust
 pub struct Bridge { /* listener, run token, tool catalogue, client */ }
@@ -151,7 +152,9 @@ no-compile-time-dependency rule.
 
 - **`InvocationId { turn: TurnId, attempt: Attempt, call_id: CallId }`** —
   fields per the update-payload policy table (requirements). `call_id` is the
-  harness tool-use id (opaque string; stability across resume is Q2).
+  harness tool-use id (opaque string; Claude Code delivers it in
+  `params._meta["claudecode/toolUseId"]` — verified live; not stable across
+  kill/resume, see requirements Target State exception and Q2/Q3).
 - **`InvocationState`** — `InFlight { attempt_started: Attempt } |
   Complete { result: ToolResult }`. Workflow state; never in bridge memory
   beyond a request's lifetime.
