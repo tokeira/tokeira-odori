@@ -26,3 +26,5 @@
 //! agents crate's types, so defining it there keeps the graph acyclic) and
 //! frozen early (launch plan: EOD day 22) so provider implementations can
 //! proceed in parallel behind a stable surface.
+
+pub mod claude_flags;
