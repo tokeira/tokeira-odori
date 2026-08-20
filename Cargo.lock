@@ -1167,9 +1167,16 @@ dependencies = [
 name = "odori-agents"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "futures",
  "serde",
  "serde_json",
+ "temporalio-client",
+ "temporalio-common",
+ "temporalio-macros",
+ "temporalio-sdk",
+ "temporalio-workflow",
  "thiserror",
  "tokio",
  "tracing",
@@ -1181,6 +1188,7 @@ name = "odori-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "odori-agents",
  "temporalio-client",
  "temporalio-common",
  "temporalio-macros",
