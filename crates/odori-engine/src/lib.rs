@@ -76,6 +76,8 @@ pub struct OdoriRuntimeBuilder {
     target: Option<ConnectTarget>,
     registry: AgentRegistry,
     providers: Option<Providers>,
+    #[cfg(feature = "preview")]
+    bridge: Option<odori_mcp_bridge::BridgeConfig>,
 }
 
 impl OdoriRuntimeBuilder {
@@ -100,6 +102,14 @@ impl OdoriRuntimeBuilder {
     /// Override the namespace (default: `"default"`).
     pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = namespace.into();
+        self
+    }
+
+    /// Enable the mcp-bridge for this runtime: framework tools execute as
+    /// durable activities, reachable mid-turn (spec `.kiro/specs/mcp-bridge/`).
+    #[cfg(feature = "preview")]
+    pub fn bridge(mut self, config: odori_mcp_bridge::BridgeConfig) -> Self {
+        self.bridge = Some(config);
         self
     }
 
@@ -129,7 +139,24 @@ impl OdoriRuntimeBuilder {
             .context("construct the SDK client")?;
 
         let registry = Arc::new(self.registry);
-        let activities = TurnActivities::new(registry, providers);
+        #[allow(unused_mut)]
+        let mut activities = TurnActivities::new(registry.clone(), providers);
+        #[cfg(feature = "preview")]
+        let bridge = match self.bridge {
+            Some(config) => {
+                let bridge = odori_mcp_bridge::Bridge::start(
+                    registry.clone(),
+                    Arc::new(odori_mcp_bridge::WorkflowUpdateClient::new(client.clone())),
+                    config,
+                )
+                .await
+                .context("start the mcp-bridge server")?;
+                activities = activities.with_attachments(Arc::new(bridge.clone()));
+                Some(bridge)
+            }
+            None => None,
+        };
+        let _ = &registry;
 
         // Workflow futures are deliberately !Send, so the worker cannot run
         // on a multi-threaded tokio executor. It gets its own OS thread with
@@ -172,6 +199,8 @@ impl OdoriRuntimeBuilder {
             task_queue: self.task_queue,
             shutdown: Some(shutdown),
             worker_thread: Some(worker_thread),
+            #[cfg(feature = "preview")]
+            bridge,
         })
     }
 }
@@ -182,6 +211,8 @@ pub struct OdoriRuntime {
     task_queue: String,
     shutdown: Option<Box<dyn Fn() + Send + Sync>>,
     worker_thread: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+    #[cfg(feature = "preview")]
+    bridge: Option<odori_mcp_bridge::Bridge>,
 }
 
 impl fmt::Debug for OdoriRuntime {
@@ -201,6 +232,8 @@ impl OdoriRuntime {
             target: None,
             registry: AgentRegistry::new(),
             providers: None,
+            #[cfg(feature = "preview")]
+            bridge: None,
         }
     }
 
@@ -212,6 +245,12 @@ impl OdoriRuntime {
     /// The underlying SDK client, for surfaces the runner does not wrap.
     pub fn client(&self) -> Client {
         self.client.clone()
+    }
+
+    /// The bridge endpoint URL, when the bridge is enabled.
+    #[cfg(feature = "preview")]
+    pub fn bridge_url(&self) -> Option<&str> {
+        self.bridge.as_ref().map(|bridge| bridge.url())
     }
 
     /// Stop the worker and await its drain.
