@@ -33,7 +33,9 @@
 use std::{fmt, sync::Arc};
 
 use anyhow::Context as _;
-use odori_agents::{AgentRegistry, Providers, Runner, TurnActivities, register_odori};
+use odori_agents::{
+    AgentRegistry, Providers, Runner, TurnActivities, register_odori, run::ToolActivities,
+};
 use temporalio_client::{
     Client, ClientOptions, Connection, ConnectionOptions, Url,
     callback_based::CallbackBasedGrpcService,
@@ -141,9 +143,12 @@ impl OdoriRuntimeBuilder {
         let registry = Arc::new(self.registry);
         #[allow(unused_mut)]
         let mut activities = TurnActivities::new(registry.clone(), providers);
+        #[allow(unused_mut)]
+        let mut tool_activities = ToolActivities::new(registry.clone());
         #[cfg(feature = "preview")]
         let bridge = match self.bridge {
             Some(config) => {
+                tool_activities = tool_activities.with_max_result_bytes(config.max_result_bytes);
                 let bridge = odori_mcp_bridge::Bridge::start(
                     registry.clone(),
                     Arc::new(odori_mcp_bridge::WorkflowUpdateClient::new(client.clone())),
@@ -175,10 +180,13 @@ impl OdoriRuntimeBuilder {
                 local.block_on(async move {
                     let runtime = Runtime::new_assume_tokio(Default::default())
                         .context("assemble the SDK runtime")?;
-                    let worker_options =
-                        register_odori(WorkerOptions::new(worker_queue), activities)
-                            .context("register the Odori workflow and activities")?
-                            .build();
+                    let worker_options = register_odori(
+                        WorkerOptions::new(worker_queue),
+                        activities,
+                        tool_activities,
+                    )
+                    .context("register the Odori workflow and activities")?
+                    .build();
                     let mut worker = Worker::new(&runtime, worker_client, worker_options)
                         .context("construct the SDK worker")?;
                     let shutdown: Box<dyn Fn() + Send + Sync> = Box::new(worker.shutdown_handle());

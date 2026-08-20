@@ -312,10 +312,19 @@ Open questions held for Ian (numbering shared with `design.md`):
   heuristics with their wrong-dedupe risk? **Sharpened by the Q2 answer:**
   on Claude this now governs the main harness-death recovery path, not an
   edge case — worth deciding with that weight in mind.
-- **Q4 — Result size policy:** tool results ride updates → history → MCP.
-  Cap-and-fail, or offload past a threshold — and to where, embedded?
-- **Q5 — Loopback auth depth:** per-run token (draft) or per-attempt tokens
-  folded into fencing?
+- **Q4 — Result size policy: DECIDED (operator, 2026-08-20)** — cap-and-fail
+  at 256 KiB of serialized content, configurable
+  (`BridgeConfig::max_result_bytes`), enforced at the `execute_tool`
+  activity before anything enters history; oversized results become
+  model-visible `isError` results ("write large output to a file and return
+  its path"). Offload-beyond-threshold deferred to the service tier, which
+  has somewhere honest to offload to.
+- **Q5 — Loopback auth depth: DECIDED by implementation** — per-attempt
+  bearer tokens, folded into fencing: the attempt stamped on an invocation
+  must be the attempt that spawned the calling harness, or a zombie's calls
+  would carry the current attempt and dissolve the fence. Stale tokens keep
+  resolving so zombie calls reach the registry and get fenced rather than
+  401ing.
 - **Q6 — Orphaned in-flight tools:** run-to-completion-and-record (draft,
   Requirement 6.6) or per-`Tool` cancel policy?
 - **Q7 — Server naming:** `odori` (draft) is model-visible prompt surface;

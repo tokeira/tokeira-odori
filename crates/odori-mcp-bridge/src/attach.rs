@@ -38,6 +38,11 @@ pub struct BridgeConfig {
     pub mcp_timeout_pin: Option<Duration>,
     /// Model-visible MCP server name (spec Q7 draft: `odori`).
     pub server_name: String,
+    /// Ceiling on one tool result's serialized content (spec Q4,
+    /// operator-decided: cap-and-fail). Enforced at the `execute_tool`
+    /// activity, before anything enters history; oversized results become
+    /// model-visible `isError` results.
+    pub max_result_bytes: usize,
 }
 
 impl Default for BridgeConfig {
@@ -46,6 +51,7 @@ impl Default for BridgeConfig {
             keepalive: Duration::from_secs(10),
             mcp_timeout_pin: Some(Duration::from_secs(120)),
             server_name: "odori".to_owned(),
+            max_result_bytes: odori_agents::run::DEFAULT_MAX_RESULT_BYTES,
         }
     }
 }

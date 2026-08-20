@@ -886,12 +886,30 @@ pub struct ExecuteToolInput {
 #[derive(Debug)]
 pub struct ToolActivities {
     registry: Arc<AgentRegistry>,
+    max_result_bytes: usize,
 }
+
+/// Default ceiling on one tool result's serialized content (mcp-bridge
+/// spec Q4, operator-decided 2026-08-20): results ride updates into
+/// history and snapshots of the in-memory engine, so they are bounded here
+/// — at the activity, before anything enters history. Oversized results
+/// become model-visible `isError` results the model can adapt to.
+pub const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
 
 impl ToolActivities {
     /// Assemble for worker registration, sharing the agent registry.
     pub fn new(registry: Arc<AgentRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            max_result_bytes: DEFAULT_MAX_RESULT_BYTES,
+        }
+    }
+
+    /// Override the per-result size ceiling (spec Q4; wired from
+    /// `BridgeConfig::max_result_bytes` by the engine bootstrap).
+    pub fn with_max_result_bytes(mut self, max_result_bytes: usize) -> Self {
+        self.max_result_bytes = max_result_bytes;
+        self
     }
 }
 
@@ -927,10 +945,27 @@ impl ToolActivities {
             invocation_id: input.identity.call_id.clone(),
         };
         match tool.invoke(context, input.arguments).await {
-            Ok(value) => Ok(tool_output_to_result(value)),
+            Ok(value) => Ok(cap_result(
+                tool_output_to_result(value),
+                self.max_result_bytes,
+            )),
             Err(failure) => Err(tool_failure(&failure)),
         }
     }
+}
+
+/// Enforce the Q4 size policy: an oversized result is replaced by a
+/// model-visible failure telling the model how to adapt, recorded like any
+/// result so replays serve it identically. Terminal by design — retrying
+/// reproduces the same size.
+fn cap_result(result: ToolCallResult, max_result_bytes: usize) -> ToolCallResult {
+    let size = result.content.to_string().len();
+    if size <= max_result_bytes {
+        return result;
+    }
+    ToolCallResult::error(format!(
+        "tool result too large: {size} bytes exceeds the {max_result_bytes}-byte limit;          write large output to a file and return its path instead"
+    ))
 }
 
 /// Render a handler's output value as an MCP content array: strings become
@@ -950,4 +985,23 @@ fn tool_failure(failure: &ToolFailure) -> ActivityError {
             .non_retryable(!failure.retryable)
             .build(),
     ))
+}
+
+#[cfg(test)]
+mod q4_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_results_become_model_visible_failures() {
+        let big = ToolCallResult::text("x".repeat(1024));
+        let capped = cap_result(big.clone(), 256);
+        assert!(capped.is_error);
+        let text = capped.content.to_string();
+        assert!(
+            text.contains("too large") && text.contains("256-byte limit"),
+            "{text}"
+        );
+        // Under the cap: untouched.
+        assert_eq!(cap_result(big.clone(), 1_000_000), big);
+    }
 }

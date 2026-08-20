@@ -28,9 +28,9 @@ use crate::{
 pub fn register_odori(
     options: WorkerOptionsBuilder,
     activities: TurnActivities,
+    tool_activities: crate::run::ToolActivities,
 ) -> Result<WorkerOptionsBuilder, temporalio_sdk::WorkflowRegistrationError> {
     let registry = activities.registry_handle();
-    let tool_activities = crate::run::ToolActivities::new(registry.clone());
     Ok(options
         .register_workflow_with_factory::<AgentRun, _>(move || {
             AgentRun::with_registry(registry.clone())
