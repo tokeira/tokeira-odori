@@ -18,7 +18,8 @@
 //!   death mid-await, and crash-mid-turn recovery (turn retry + harness
 //!   session resume).
 //!
-//! The design is frozen in `docs/design/mcp-bridge.md` before implementation
-//! begins; the invariants stated there are binding on this crate. The
+//! The design is frozen in the `.kiro/specs/mcp-bridge/` spec (requirements,
+//! design, tasks) before implementation begins; the correctness properties
+//! stated there are binding on this crate. The
 //! `preview` feature is the descope boundary: bridge off, framework tools
 //! delegate to the harness's own tooling.
