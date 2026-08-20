@@ -27,6 +27,7 @@
 
 pub mod agent;
 pub mod guardrail;
+pub mod invocation;
 pub mod output;
 pub mod provider;
 pub mod run;
@@ -35,6 +36,7 @@ pub mod tool;
 
 pub use agent::{Agent, AgentRegistry};
 pub use guardrail::{Guardrail, GuardrailVerdict, RunBudget};
+pub use invocation::{InvocationId, InvocationRegistry, ToolCallResult};
 pub use output::{AgentOutput, Json};
 pub use provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
 pub use run::{AgentRun, Providers, RunConfig, RunEnd, RunOutput, TurnActivities};

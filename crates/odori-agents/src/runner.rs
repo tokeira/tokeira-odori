@@ -30,11 +30,13 @@ pub fn register_odori(
     activities: TurnActivities,
 ) -> Result<WorkerOptionsBuilder, temporalio_sdk::WorkflowRegistrationError> {
     let registry = activities.registry_handle();
+    let tool_activities = crate::run::ToolActivities::new(registry.clone());
     Ok(options
         .register_workflow_with_factory::<AgentRun, _>(move || {
             AgentRun::with_registry(registry.clone())
         })?
-        .register_activities(activities))
+        .register_activities(activities)
+        .register_activities(tool_activities))
 }
 
 /// Starts and follows agent runs against a connected client.
