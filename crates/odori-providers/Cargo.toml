@@ -1,0 +1,29 @@
+[package]
+name = "odori-providers"
+description = "Odori model providers: supervised vendor harnesses (Claude Code, Codex) first, raw APIs behind features"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+# Raw-API providers are the secondary tier: minimal internal loops over the
+# vendors' HTTP APIs, off by default. Subscription harnesses are the default
+# tier and are always compiled.
+api-anthropic = []
+api-openai = []
+
+[lints]
+workspace = true

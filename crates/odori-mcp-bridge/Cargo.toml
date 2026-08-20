@@ -1,0 +1,26 @@
+[package]
+name = "odori-mcp-bridge"
+description = "Odori's MCP bridge: framework-owned tools executed as durable activities mid-turn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[features]
+# Descope boundary (launch-plan ladder rung 3): with `preview` off the bridge
+# is inert and framework tools delegate to the harness's own tooling; with it
+# on, mid-turn tool calls execute as durable activities.
+preview = []
+
+[lints]
+workspace = true

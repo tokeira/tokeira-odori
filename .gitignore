@@ -1,0 +1,57 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# IDE / editor
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.secret
+
+# Debug
+*.dSYM/
+*.su
+*.iml
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+
+# Benchmarks output
+criterion/
+
+# Archives
+*.zip
+
+# Proptest regressions (generated, not committed)
+**/proptest-regressions/
+
+# Scratch directory for commit messages, patch snapshots, and similar
+# transient files. Nothing in this directory is ever committed.
+/artifacts/
+
+# Codex silently prefers this file over AGENTS.md — never commit one
+AGENTS.override.md
+
+# Claude Code session-local state
+.claude/settings.local.json
+.claude/worktrees/
+.claude/launch.json
+.claude/wf-*.js

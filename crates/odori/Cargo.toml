@@ -1,0 +1,18 @@
+[package]
+name = "odori"
+description = "Minimal Rust agent framework with durable execution via embedded tokeira"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+odori-agents = { workspace = true }
+odori-providers = { workspace = true }
+odori-engine = { workspace = true }
+odori-mcp-bridge = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,70 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/odori",
+    "crates/odori-agents",
+    "crates/odori-providers",
+    "crates/odori-engine",
+    "crates/odori-mcp-bridge",
+]
+exclude = [
+    # Spikes are bounded throwaway probes with their own lockfiles (engine-repo
+    # convention): excluded so workspace builds, lints, and the finish bar never
+    # touch them.
+    "spikes/claude-driver",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+authors = ["OpenAI"]
+repository = "https://github.com/tokeira/tokeira-odori"
+
+[workspace.dependencies]
+# The Temporal Rust SDK is the worker SDK; the embedded tokeira engine speaks
+# the same Temporal contract over a loopback port. Vanilla crates.io pins —
+# no fork, no [patch] — by launch decision (the replay-guard fix, upstream
+# PR #1353, ships in this line).
+temporalio-sdk = "0.7"
+temporalio-sdk-core = "0.7"
+temporalio-client = "0.7"
+temporalio-common = "0.7"
+temporalio-macros = "0.7"
+
+anyhow = "1.0"
+async-trait = "0.1"
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.41", features = ["full"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uuid = { version = "1.10", features = ["serde", "v4"] }
+
+# Internal crates carry an explicit version so intra-workspace requirements
+# stay publishable (and cargo-deny's wildcard ban stays meaningful).
+odori = { path = "crates/odori", version = "0.1.0" }
+odori-agents = { path = "crates/odori-agents", version = "0.1.0" }
+odori-providers = { path = "crates/odori-providers", version = "0.1.0" }
+odori-engine = { path = "crates/odori-engine", version = "0.1.0" }
+odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.0" }
+
+# Mechanized AGENTS.md rules: prose rules drift under a fluid codebase;
+# compiler-enforced ones survive refactors. Everything here is binding and
+# mirrors the engine repo's posture — a fresh repo starts at the bar the
+# engine burned down to.
+[workspace.lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "warn"
+missing_debug_implementations = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+undocumented_unsafe_blocks = "deny" # every retained unsafe block carries // SAFETY:
+unwrap_used = "deny"                # expect-with-invariant-message is the sanctioned remedy
+print_stdout = "deny"               # tracing, not println — CLI surfaces carry documented allows
+print_stderr = "deny"

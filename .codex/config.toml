@@ -1,0 +1,9 @@
+# Codex project-scoped configuration (read by the ChatGPT app / Codex when
+# this workspace is trusted).
+#
+# project_doc_max_bytes: the instruction chain Codex assembles (global
+# AGENTS.md + this repo's root AGENTS.md + any crate-local AGENTS.md on the
+# path to cwd) can exceed the 32 KiB default; without this raise, Codex
+# silently truncates the project constitution.
+
+project_doc_max_bytes = 131072
