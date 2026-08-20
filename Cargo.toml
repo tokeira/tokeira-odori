@@ -44,6 +44,11 @@ temporalio-workflow = "0.7"
 
 anyhow = "1.0"
 async-trait = "0.1"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
 # Property-based testing (dev-dependency tier): the mcp-bridge spec's
 # correctness properties P1-P7 are required PBT suites (engine repo pins the
 # same line).
