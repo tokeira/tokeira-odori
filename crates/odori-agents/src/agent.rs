@@ -140,6 +140,11 @@ impl Agent {
     pub fn tooling(&self) -> TurnTooling {
         TurnTooling {
             allowed_native_tools: self.allowed_native_tools.clone(),
+            framework_tools: self
+                .tools
+                .iter()
+                .map(|tool| tool.name().to_owned())
+                .collect(),
             ..TurnTooling::default()
         }
     }
