@@ -12,6 +12,18 @@ publish = false
 [workspace]
 resolver = "3"
 
+[[example]]
+name = "hello-durable"
+path = "../../examples/hello-durable/main.rs"
+
+[[example]]
+name = "slice-fleet"
+path = "../../examples/slice-fleet/main.rs"
+
+[[example]]
+name = "rewind"
+path = "../../examples/rewind/main.rs"
+
 [dependencies]
 odori = { path = "../../crates/odori" }
 odori-agents = { path = "../../crates/odori-agents" }
