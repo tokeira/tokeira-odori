@@ -12,6 +12,10 @@ exclude = [
     # that graph never expands or constrains the product workspace. Run with
     # `cargo test --manifest-path tests/embedded/Cargo.toml`.
     "tests/embedded",
+    # Phase-1 protocol probe for the subscription-backed Codex provider. It
+    # carries its own lockfile so experimental dependencies and wire probes do
+    # not move the product workspace graph.
+    "spikes/codex-driver",
 ]
 
 [workspace.package]

@@ -34,7 +34,7 @@ pub struct InvocationId {
     /// Turn-activity attempt that carried the call (fencing dimension).
     pub attempt: u32,
     /// Harness-assigned tool-use id (Claude Code:
-    /// `_meta["claudecode/toolUseId"]`).
+    /// `_meta["claudecode/toolUseId"]`; Codex: `_meta["callId"]`).
     pub call_id: String,
 }
 
