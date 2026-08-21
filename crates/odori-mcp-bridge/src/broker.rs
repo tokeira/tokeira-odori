@@ -25,6 +25,15 @@ pub trait UpdateClient: fmt::Debug + Send + Sync + 'static {
         workflow_id: &str,
         invocation: ToolInvocation,
     ) -> Result<ToolInvocationReply, BridgeError>;
+
+    /// Wait until `workflow_id` reaches a terminal workflow outcome.
+    ///
+    /// Test clients that do not model lifecycle may use this default, which
+    /// never declares a run terminal and therefore never permits token
+    /// eviction. Production overrides it with the engine's close-event wait.
+    async fn wait_for_terminal(&self, _workflow_id: &str) {
+        std::future::pending::<()>().await;
+    }
 }
 
 /// The production [`UpdateClient`]: the SDK client against the engine.
@@ -59,6 +68,31 @@ impl UpdateClient for WorkflowUpdateClient {
                 message: error.to_string(),
             })
     }
+
+    async fn wait_for_terminal(&self, workflow_id: &str) {
+        loop {
+            let result = self
+                .client
+                .get_workflow_handle::<AgentRun>(workflow_id)
+                .get_result(Default::default())
+                .await;
+            match result {
+                Ok(_) => return,
+                Err(error) if error.is_workflow_outcome() => return,
+                Err(error) => {
+                    // Never convert an infrastructure observation failure
+                    // into eviction: a still-live run's stale token must keep
+                    // resolving so the workflow can fence it, not become 401.
+                    tracing::warn!(
+                        workflow_id,
+                        %error,
+                        "could not observe workflow terminal state; retaining bridge tokens"
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
 }
 
 /// Drives one call: submit the update, emit keepalive ticks while it is
@@ -75,6 +109,10 @@ impl CallBroker {
     /// timeout (spec Requirement 5.3 pins that timeout at spawn).
     pub fn new(client: Arc<dyn UpdateClient>, keepalive: Duration) -> Self {
         Self { client, keepalive }
+    }
+
+    pub(crate) async fn wait_for_terminal(&self, workflow_id: &str) {
+        self.client.wait_for_terminal(workflow_id).await;
     }
 
     /// Execute one call. `on_progress` fires every keepalive interval while

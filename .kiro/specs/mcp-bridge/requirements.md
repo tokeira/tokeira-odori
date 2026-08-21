@@ -104,13 +104,18 @@ Q3/Q6 — a decision this evidence sharpens but does not make.
   and registry live in; provider trait frozen EOD day 22); O3/O4 providers
   (spawn-time attachment); engine-repo T2 (`Engine::embedded()`); Temporal
   Rust SDK 0.7 update support (workspace pin, `temporalio-sdk = "0.7"`).
-- **Harness identity behaviour (observed, Claude):** spike crash-mid-tool-call
-  experiment — `tools/call` carries the true tool-use id in
+- **Harness identity behaviour (observed):** the Claude spike's
+  crash-mid-tool-call experiment found that `tools/call` carries the true
+  tool-use id in
   `params._meta["claudecode/toolUseId"]` plus a `progressToken`; the JSON-RPC
   id is a per-connection counter; kill-mid-await → session records a failed
   tool result and resume regenerates under a fresh id (Q2 answered for
-  Claude). Still open: Codex equivalents (Q1/Q2-codex, lane C) and whether
-  Claude's MCP client retries a timed-out call within one attempt.
+  Claude). The Codex 0.148 PoC and live O6 run found direct streamable HTTP
+  attachment, complete bearer headers supplied through `env_http_headers`,
+  and the true id at `params._meta.callId`. Codex regenerated that id both
+  after process-death/resume and when the model retried a timed-out call in
+  the same turn; its fixed wall-clock tool timeout was not extended by MCP
+  progress notifications.
 
 ## Contract Policy
 
@@ -148,18 +153,22 @@ framework tools are reachable mid-turn without a separate server to operate.
 1. WHERE `preview` is enabled, THE engine SHALL run exactly one bridge MCP
    server per process, listening with streamable HTTP on `127.0.0.1` at an
    ephemeral port.
-2. WHEN a run starts, THE bridge SHALL mint a per-run bearer token and expose
-   it only via the harness MCP configuration the provider injects.
+2. WHEN a turn attempt starts, THE bridge SHALL mint a per-attempt bearer
+   token and expose it only via the harness MCP configuration the provider
+   injects; all of a run's tokens SHALL be evicted only after its workflow is
+   confirmed terminal.
 3. IF an MCP request does not carry the run's bearer token, THEN THE bridge
    SHALL reject it before consulting the registry.
 4. WHEN the Claude provider spawns a turn, THE provider SHALL attach the
    bridge via `--mcp-config` declaring one HTTP server named `odori`.
 5. WHEN the Claude provider spawns a turn, THE provider SHALL scope
    `--allowedTools` to the bridge's tool set.
-6. WHEN the Codex provider starts an app-server session, THE provider SHALL
-   attach the bridge via `mcp_servers` configuration — directly over HTTP
-   where the pinned Codex supports it, otherwise through the stdio re-exec
-   shim (Q1).
+6. WHEN the Codex provider starts, resumes, or forks an app-server session,
+   THE provider SHALL attach the bridge directly over streamable HTTP using
+   dotted `mcp_servers.<id>.url` and `mcp_servers.<id>.env_http_headers`
+   configuration; the complete `Authorization` bearer value SHALL be resolved
+   from the app-server process environment rather than serialized into thread
+   configuration.
 7. WHEN the harness issues `tools/list`, THE bridge SHALL return exactly the
    agent's `Tool` set for the current turn.
 
@@ -293,20 +302,27 @@ observable behaviour, so that durability is real and not a demo claim.
 
 ## Iteration and Feedback Notes
 
-Open questions held for Ian (numbering shared with `design.md`):
+Questions and decisions (numbering shared with `design.md`):
 
-- **Q1 — Codex transport:** HTTP MCP directly, or commit the stdio shim from
-  day one? (Lane C's Codex-driver PoC answers; the shim is the fallback
-  either way.)
-- **Q2 — Call-id stability on resume: ANSWERED for Claude** (spike
-  crash-mid-tool-call experiment): not stable across kill/resume — the
+- **Q1 — Codex transport: ANSWERED (Codex 0.148 PoC).** App-server accepts
+  the bridge's streamable HTTP URL and bearer header at session start, resume,
+  and fork via dotted `mcp_servers` config. The provider uses
+  `env_http_headers` so the full bearer value stays in the child environment;
+  no stdio re-exec shim is part of the contract.
+- **Q2 — Call-id stability on resume: ANSWERED for Claude and Codex.** The
+  Claude spike's crash-mid-tool-call experiment found it is not stable across
+  kill/resume — the
   session closes the pending call as failed and the resumed model
   regenerates under a fresh id; the bridge receives the true id via
   `_meta["claudecode/toolUseId"]`. Registry semantics (Requirements 3.1–3.3)
   stay as specified — same-id dedupe is still correct whenever ids do
   re-present — but harness-death recovery on Claude flows through Q3/Q6
-  instead. Remaining: the Codex equivalent (lane C) and Claude's same-attempt
-  MCP-client-retry behaviour.
+  instead. Codex likewise regenerated `_meta.callId` after process death and
+  resume. In the O6 live timeout observation, Codex surfaced its fixed
+  wall-clock timeout to the model; the requested same-turn retry produced a
+  second `tools/call` with a fresh `exec-*` id, not an automatic same-id MCP
+  replay. Both durable invocations therefore execute, as the documented Q3
+  idempotency contract requires.
 - **Q3 — Second-level dedupe:** accept regenerated-id re-execution (current
   draft; tool idempotency keys carry the weight), or add args-hash
   heuristics with their wrong-dedupe risk? **Sharpened by the Q2 answer:**

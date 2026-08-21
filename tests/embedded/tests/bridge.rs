@@ -75,6 +75,17 @@ async fn mcp_call(url: &str, auth: &str, tool: &str, call_id: &str) -> (String, 
     (response, frame)
 }
 
+async fn mcp_status(url: &str, auth: &str) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .post(url)
+        .header("Authorization", auth)
+        .json(&json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}))
+        .send()
+        .await
+        .expect("bridge reachable")
+        .status()
+}
+
 fn result_text(frame: &Value) -> Option<String> {
     frame
         .pointer("/result/content/0/text")
@@ -282,6 +293,19 @@ async fn stale_attempts_are_fenced_but_served_recorded_results() -> Result<()> {
     );
     // …and only the two legitimate executions ran (tu-a, tu-b).
     assert_eq!(executions.load(Ordering::SeqCst), 2);
+
+    // The same stale token that reached fencing while the workflow was live
+    // is evicted only after the workflow close event is observable.
+    let (stale_url, stale_auth) = provider.stale.lock().expect("lock").clone().expect("stashed");
+    let mut status = reqwest::StatusCode::OK;
+    for _ in 0..100 {
+        status = mcp_status(&stale_url, &stale_auth).await;
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
 
     runtime.shutdown().await?;
     engine.shutdown().await?;

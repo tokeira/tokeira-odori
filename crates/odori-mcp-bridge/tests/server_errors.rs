@@ -4,17 +4,23 @@
 //! client-side dependencies.
 #![cfg(feature = "preview")]
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 
 use async_trait::async_trait;
 use odori_agents::{
     Agent, AgentRegistry, Tool, ToolCallResult,
     provider::{AttachmentSource, McpTransport, TurnIdentity},
-    run::{ToolInvocation, ToolInvocationReply},
+    run::{InvocationRejection, ToolInvocation, ToolInvocationReply},
 };
 use odori_mcp_bridge::{Bridge, BridgeConfig, BridgeError, UpdateClient};
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    sync::Notify,
+};
 
 #[derive(Debug)]
 struct EchoUpdateClient;
@@ -32,6 +38,35 @@ impl UpdateClient for EchoUpdateClient {
                 invocation.tool, invocation.identity.call_id
             ),
         )))
+    }
+}
+
+#[derive(Debug, Default)]
+struct FencingLifecycleClient {
+    latest_attempt: AtomicU32,
+    terminal: Notify,
+}
+
+#[async_trait]
+impl UpdateClient for FencingLifecycleClient {
+    async fn tool_invoked(
+        &self,
+        _workflow_id: &str,
+        invocation: ToolInvocation,
+    ) -> Result<ToolInvocationReply, BridgeError> {
+        let latest = self
+            .latest_attempt
+            .fetch_max(invocation.identity.attempt, Ordering::SeqCst);
+        if invocation.identity.attempt < latest {
+            return Ok(ToolInvocationReply::Rejected(InvocationRejection::Fenced));
+        }
+        Ok(ToolInvocationReply::Completed(ToolCallResult::text(
+            invocation.identity.call_id,
+        )))
+    }
+
+    async fn wait_for_terminal(&self, _workflow_id: &str) {
+        self.terminal.notified().await;
     }
 }
 
@@ -94,15 +129,18 @@ async fn bridge_with_token() -> (Bridge, String) {
             "ops",
         )
         .expect("agent has tools");
-    let McpTransport::Http { headers, .. } = &attachment.mcp_server.transport else {
+    (bridge, attachment_token(&attachment.mcp_server.transport))
+}
+
+fn attachment_token(transport: &McpTransport) -> String {
+    let McpTransport::Http { headers, .. } = transport else {
         panic!("bridge attachment must be HTTP");
     };
-    let token = headers[0]
+    headers[0]
         .1
         .strip_prefix("Bearer ")
         .expect("bearer")
-        .to_owned();
-    (bridge, token)
+        .to_owned()
 }
 
 #[tokio::test]
@@ -242,4 +280,99 @@ async fn tools_call_accepts_codex_call_id() {
             .and_then(Value::as_str),
         Some("ran deploy for exec-codex-test")
     );
+}
+
+#[tokio::test]
+async fn live_run_stale_token_is_fenced_then_terminal_run_tokens_are_evicted() {
+    let mut registry = AgentRegistry::new();
+    registry.register(Agent::new("ops", "operate").with_tool(Tool::new(
+        "deploy",
+        "Deploy the thing",
+        json!({"type": "object", "properties": {}}),
+        |_context, _args| async { Ok(json!("unused")) },
+    )));
+    let client = Arc::new(FencingLifecycleClient::default());
+    let bridge = Bridge::start(Arc::new(registry), client.clone(), BridgeConfig::default())
+        .await
+        .expect("bridge start");
+    let attempt_one = bridge
+        .attachment_for(
+            "wf-evict",
+            &TurnIdentity {
+                run_id: "run-evict".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            "ops",
+        )
+        .expect("attempt one attachment");
+    let attempt_two = bridge
+        .attachment_for(
+            "wf-evict",
+            &TurnIdentity {
+                run_id: "run-evict".into(),
+                turn: 0,
+                attempt: 2,
+            },
+            "ops",
+        )
+        .expect("attempt two attachment");
+    let stale_token = attachment_token(&attempt_one.mcp_server.transport);
+    let current_token = attachment_token(&attempt_two.mcp_server.transport);
+
+    // Present the current attempt first, then a fresh call through the stale
+    // attachment. While the workflow is live the stale token still passes
+    // authentication and reaches fencing — it must never collapse to 401.
+    let (status, _) = http_post(
+        bridge.url(),
+        Some(&current_token),
+        &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "deploy", "arguments": {},
+                           "_meta": {"callId": "exec-current"}}}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (status, body) = http_post(
+        bridge.url(),
+        Some(&stale_token),
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "deploy", "arguments": {},
+                           "_meta": {"callId": "exec-stale"}}}),
+    )
+    .await;
+    assert_eq!(status, 200, "live stale token became unauthorized");
+    let last = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .next_back()
+        .expect("final SSE frame");
+    let response: Value = serde_json::from_str(last).expect("json frame");
+    assert_eq!(
+        response.pointer("/error/code").and_then(Value::as_i64),
+        Some(-32011),
+        "live stale attempt did not reach the fencing path"
+    );
+
+    client.terminal.notify_one();
+    let mut stale_status = status;
+    for _ in 0..50 {
+        (stale_status, _) = http_post(
+            bridge.url(),
+            Some(&stale_token),
+            &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}),
+        )
+        .await;
+        if stale_status == 401 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(stale_status, 401, "terminal run token was not evicted");
+    let (current_status, _) = http_post(
+        bridge.url(),
+        Some(&current_token),
+        &json!({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}),
+    )
+    .await;
+    assert_eq!(current_status, 401, "terminal run retained a token");
 }
