@@ -21,6 +21,7 @@ use odori_agents::{
     RunEnd, RunnerError,
     provider::{
         Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
+        TurnUsage,
     },
 };
 use odori_engine::{ConnectTarget, OdoriRuntime};
@@ -65,8 +66,17 @@ struct ScriptedProvider {
 enum Behaviour {
     Echo,
     ReplyWith(String),
+    ReplyWithUsage {
+        text: String,
+        usage: TurnUsage,
+    },
     FailAfterSession {
         session_id: String,
+        error: TurnError,
+    },
+    FailAfterUsage {
+        session_id: String,
+        usage: TurnUsage,
         error: TurnError,
     },
 }
@@ -124,10 +134,31 @@ impl Provider for ScriptedProvider {
                 });
                 Ok(TurnOutcome::new(session_id, text))
             }
+            Behaviour::ReplyWithUsage { text, usage } => {
+                events.emit(TurnEvent::SessionStarted {
+                    session_id: session_id.clone(),
+                });
+                events.report_usage(usage.clone());
+                let mut outcome = TurnOutcome::new(session_id, text);
+                outcome.usage = usage;
+                Ok(outcome)
+            }
             Behaviour::FailAfterSession { session_id, error } => {
                 events.emit(TurnEvent::SessionStarted { session_id });
                 // Give the heartbeat pump time to record the session id
                 // before the failure ends the attempt.
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                Err(error)
+            }
+            Behaviour::FailAfterUsage {
+                session_id,
+                usage,
+                error,
+            } => {
+                events.emit(TurnEvent::SessionStarted { session_id });
+                events.report_usage(usage);
+                // Ensure the heartbeat with both session and usage reaches
+                // Temporal before this retryable attempt fails.
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 Err(error)
             }
@@ -230,6 +261,51 @@ async fn failed_attempt_retries_and_resumes_forked_from_heartbeat() -> Result<()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn retry_usage_is_carried_through_heartbeat_details() -> Result<()> {
+    let (engine, _g1, _g2) = start_engine().await?;
+    let mut registry = AgentRegistry::new();
+    registry.register(Agent::new("metered", "count honestly"));
+    let mut failed_usage = TurnUsage::default();
+    failed_usage.input_tokens = Some(100);
+    failed_usage.output_tokens = Some(25);
+    failed_usage.total_cost_usd = Some(0.20);
+    let mut successful_usage = TurnUsage::default();
+    successful_usage.input_tokens = Some(150);
+    successful_usage.output_tokens = Some(40);
+    successful_usage.total_cost_usd = Some(0.30);
+    let provider = ScriptedProvider::scripted(vec![
+        Behaviour::FailAfterUsage {
+            session_id: "sess-metered-failed".to_owned(),
+            usage: failed_usage,
+            error: TurnError::HarnessDied {
+                exit_code: Some(143),
+                stderr_head: "killed after generation".to_owned(),
+            },
+        },
+        Behaviour::ReplyWithUsage {
+            text: "done".to_owned(),
+            usage: successful_usage,
+        },
+    ]);
+    let runtime = start_runtime(&engine, "tq-retry-usage", registry, provider).await?;
+
+    let conversation = runtime
+        .runner()
+        .start_conversation("metered", "work", "run-retry-usage-1")
+        .await?;
+    let output = conversation.end().await?;
+    assert_eq!(output.usage.input_tokens, 250);
+    assert_eq!(output.usage.output_tokens, 65);
+    assert!((output.usage.total_cost_usd - 0.50).abs() < f64::EPSILON);
+    assert_eq!(output.usage.turns_with_unknown_tokens, 0);
+    assert_eq!(output.usage.turns_with_unknown_cost, 0);
+
+    runtime.shutdown().await?;
+    engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn non_retryable_turn_error_fails_the_run() -> Result<()> {
     let (engine, _g1, _g2) = start_engine().await?;
     let mut registry = AgentRegistry::new();
@@ -314,6 +390,10 @@ async fn budget_and_guardrails_end_runs_typed() -> Result<()> {
     let (engine, _g1, _g2) = start_engine().await?;
     let mut registry = AgentRegistry::new();
     registry.register(Agent::new("guarded", "be safe").with_input_guardrail(NoPirates));
+    registry.register(
+        Agent::new("capped", "stop on time")
+            .with_budget(RunBudget::unlimited().with_max_turns(1)),
+    );
     let provider = ScriptedProvider::scripted(Vec::new());
     let runtime = start_runtime(&engine, "tq-guard", registry, provider.clone()).await?;
 
@@ -339,6 +419,22 @@ async fn budget_and_guardrails_end_runs_typed() -> Result<()> {
     assert!(
         matches!(error, RunnerError::BudgetExceeded { .. }),
         "{error:?}"
+    );
+
+    // A scripted interactive harness completes its one allowed turn. A
+    // queued second turn then terminates deterministically from history.
+    let conversation = runtime
+        .runner()
+        .start_conversation("capped", "first", "run-guard-3")
+        .await?;
+    conversation.send("second").await?;
+    let output = conversation.end().await?;
+    assert_eq!(output.turns, 1);
+    assert_eq!(
+        output.end,
+        RunEnd::BudgetExceeded {
+            cap: odori_agents::run::BudgetCap::Turns { spent: 1, cap: 1 }
+        }
     );
 
     runtime.shutdown().await?;

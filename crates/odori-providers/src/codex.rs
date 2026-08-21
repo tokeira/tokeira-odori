@@ -274,6 +274,7 @@ async fn run_app_server(
             usage.output_tokens = message
                 .pointer("/params/tokenUsage/last/outputTokens")
                 .and_then(Value::as_u64);
+            events.report_usage(usage.clone());
         }
         if method == Some("turn/completed")
             && message.pointer("/params/turn/id").and_then(Value::as_str) == Some(&turn_id)
@@ -282,6 +283,7 @@ async fn run_app_server(
                 .pointer("/params/turn/durationMs")
                 .and_then(Value::as_u64)
                 .map(Duration::from_millis);
+            events.report_usage(usage.clone());
             let status = message
                 .pointer("/params/turn/status")
                 .and_then(Value::as_str)

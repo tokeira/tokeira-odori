@@ -11,7 +11,7 @@ use std::sync::{
 
 use async_trait::async_trait;
 use odori_agents::{
-    Agent, AgentRegistry, Tool, ToolCallResult,
+    Agent, AgentRegistry, Handoff, Tool, ToolCallResult,
     provider::{AttachmentSource, McpTransport, TurnIdentity},
     run::{InvocationRejection, ToolInvocation, ToolInvocationReply},
 };
@@ -105,12 +105,17 @@ async fn http_post(url: &str, auth: Option<&str>, body: &Value) -> (u16, String)
 
 async fn bridge_with_token() -> (Bridge, String) {
     let mut registry = AgentRegistry::new();
-    registry.register(Agent::new("ops", "operate").with_tool(Tool::new(
-        "deploy",
-        "Deploy the thing",
-        json!({"type": "object", "properties": {}}),
-        |_context, _args| async { Ok(json!("ok")) },
-    )));
+    registry.register(
+        Agent::new("ops", "operate")
+            .with_tool(Tool::new(
+                "deploy",
+                "Deploy the thing",
+                json!({"type": "object", "properties": {}}),
+                |_context, _args| async { Ok(json!("ok")) },
+            ))
+            .with_handoff(Handoff::new("specialist")),
+    );
+    registry.register(Agent::new("specialist", "specialize"));
     let bridge = Bridge::start(
         Arc::new(registry),
         Arc::new(EchoUpdateClient),
@@ -225,6 +230,18 @@ async fn initialize_ping_and_tools_list_answer_plain() {
             .pointer("/result/tools/0/name")
             .and_then(Value::as_str),
         Some("deploy")
+    );
+    assert_eq!(
+        response
+            .pointer("/result/tools/1/name")
+            .and_then(Value::as_str),
+        Some("transfer_to_specialist")
+    );
+    assert_eq!(
+        response
+            .pointer("/result/tools/1/inputSchema/required/0")
+            .and_then(Value::as_str),
+        Some("input")
     );
 }
 

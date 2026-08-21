@@ -113,6 +113,7 @@ async fn scripted_app_server_turn_streams_events_and_result() {
     assert_eq!(outcome.text, "fake-ok");
     assert_eq!(outcome.usage.input_tokens, Some(12));
     assert_eq!(outcome.usage.output_tokens, Some(3));
+    assert_eq!(outcome.usage.total_cost_usd, None);
     assert_eq!(outcome.usage.duration, Some(Duration::from_millis(42)));
 
     let mut events = Vec::new();
