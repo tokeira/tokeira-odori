@@ -185,6 +185,13 @@ pub struct TurnTooling {
     /// leaves the backend's defaults untouched; `Some(vec![])` disallows
     /// native tooling.
     pub allowed_native_tools: Option<Vec<String>>,
+    /// Names of the agent's framework-owned `Tool`s, always present as
+    /// metadata regardless of the bridge. Providers that cannot delegate
+    /// to a harness (the API tier) use this to reject
+    /// tools-without-a-bridge as a configuration error instead of running
+    /// silently toolless. Additive growth on the frozen seam.
+    #[serde(default)]
+    pub framework_tools: Vec<String>,
     /// MCP servers to attach at spawn. With the mcp-bridge active this
     /// carries the bridge endpoint; it accepts any MCP server config.
     pub mcp_servers: Vec<McpServerConfig>,
