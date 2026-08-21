@@ -217,3 +217,29 @@ async fn tools_call_streams_result_with_harness_call_id() {
         .expect("text block");
     assert_eq!(text, "ran deploy for toolu_test1");
 }
+
+#[tokio::test]
+async fn tools_call_accepts_codex_call_id() {
+    let (bridge, token) = bridge_with_token().await;
+    let (status, body) = http_post(
+        bridge.url(),
+        Some(&token),
+        &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": {"name": "deploy", "arguments": {},
+                           "_meta": {"callId": "exec-codex-test", "progressToken": 2}}}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let last = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .next_back()
+        .expect("final SSE frame");
+    let response: Value = serde_json::from_str(last).expect("json frame");
+    assert_eq!(
+        response
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str),
+        Some("ran deploy for exec-codex-test")
+    );
+}

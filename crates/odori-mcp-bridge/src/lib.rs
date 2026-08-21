@@ -6,10 +6,10 @@
 //! inside a turn that is *itself* an activity. This crate is that bridge,
 //! implementing `.kiro/specs/mcp-bridge/`:
 //!
-//! - [`attach::Bridge`] — the in-process streamable-HTTP MCP server on
+//! - `attach::Bridge` — the in-process streamable-HTTP MCP server on
 //!   loopback, per-attempt bearer tokens, and the [`AttachmentSource`]
 //!   implementation the turn activities consume;
-//! - [`broker::CallBroker`] — `tools/call` → workflow update translation
+//! - `broker::CallBroker` — `tools/call` → workflow update translation
 //!   with keepalive progress (record-before-respond is structural: only a
 //!   completed update's reply can be returned);
 //! - the workflow-side pieces (invocation registry, `tool_invoked` update

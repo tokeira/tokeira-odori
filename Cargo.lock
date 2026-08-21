@@ -1231,6 +1231,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "odori-agents",
+ "odori-providers",
  "proptest",
  "serde",
  "serde_json",

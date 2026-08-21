@@ -113,10 +113,13 @@ async fn tools_call(
     let tool = params.get("name").and_then(Value::as_str).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
     let progress_token = params.pointer("/_meta/progressToken").cloned();
-    // The harness call id: Claude Code's `_meta` field first (spike-verified),
-    // a generic escape hatch second, the JSON-RPC id as a last resort.
+    // Harness call identity, both spike-verified: Claude Code uses the
+    // vendor-namespaced key; Codex uses `_meta.callId` (byte-identical to
+    // app-server's `mcpToolCall.id`). The JSON-RPC id is only a per-connection
+    // counter and remains a last-resort compatibility fallback.
     let call_id = params
         .pointer("/_meta/claudecode~1toolUseId")
+        .or_else(|| params.pointer("/_meta/callId"))
         .or_else(|| params.pointer("/_meta/odori~1callId"))
         .and_then(Value::as_str)
         .map(str::to_owned)

@@ -15,8 +15,8 @@
 //!   --json` as the documented fallback.
 //!
 //! Harness versions are pinned like the Temporal pin: a provider states the
-//! harness versions it is conformance-tested against, and drift is a
-//! detect-and-explain error, never a silent behaviour change.
+//! harness versions it is conformance-tested against, and drift is detected
+//! and warned about, never a silent behaviour change.
 //!
 //! The secondary tier — raw-API providers (Anthropic Messages, OpenAI
 //! Responses) — lives behind the `api-anthropic` / `api-openai` features:
@@ -29,3 +29,6 @@
 //! proceed in parallel behind a stable surface.
 
 pub mod claude_flags;
+pub mod codex;
+
+pub use codex::{CodexProvider, EXPECTED_CODEX_CLI_VERSION};
