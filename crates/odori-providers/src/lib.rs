@@ -28,7 +28,9 @@
 //! frozen early (launch plan: EOD day 22) so provider implementations can
 //! proceed in parallel behind a stable surface.
 
+pub mod claude;
 pub mod claude_flags;
 pub mod codex;
 
+pub use claude::{ClaudeConfig, ClaudeProvider, PINNED_VERSION};
 pub use codex::{CodexProvider, EXPECTED_CODEX_CLI_VERSION};
