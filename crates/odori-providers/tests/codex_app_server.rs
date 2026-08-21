@@ -65,8 +65,8 @@ for line in sys.stdin:
         pass
     elif method == "thread/start":
         config = message["params"]["config"]
-        token_variable = config["mcp_servers.odori.bearer_token_env_var"]
-        if os.environ.get(token_variable) != "test-token":
+        token_variable = config["mcp_servers.odori.env_http_headers"]["Authorization"]
+        if os.environ.get(token_variable) != "Bearer test-token":
             emit({{"id": request_id, "error": {{"code": -32600, "message": "missing MCP token env"}}}})
             continue
         emit({{"method": "thread/started", "params": {{"thread": {{"id": "thread-fake"}}}}}})

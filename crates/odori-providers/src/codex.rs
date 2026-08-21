@@ -347,21 +347,14 @@ fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
                     .insert(format!("{base}.url"), Value::String(url.clone()));
                 let mut env_headers = Map::new();
                 for (header_index, (name, value)) in headers.iter().enumerate() {
-                    if name.eq_ignore_ascii_case("authorization")
-                        && let Some(token) = value.strip_prefix("Bearer ")
-                    {
-                        let variable = format!("ODORI_CODEX_MCP_BEARER_{server_index}");
-                        rendered.env.push((variable.clone(), token.to_owned()));
-                        rendered.config.insert(
-                            format!("{base}.bearer_token_env_var"),
-                            Value::String(variable),
-                        );
-                    } else {
-                        let variable =
-                            format!("ODORI_CODEX_MCP_HEADER_{server_index}_{header_index}");
-                        rendered.env.push((variable.clone(), value.clone()));
-                        env_headers.insert(name.clone(), Value::String(variable));
-                    }
+                    // The bridge supplies a complete per-attempt header value
+                    // (`Bearer <token>`). Keep every value out of persisted
+                    // thread config and let Codex resolve it from the child
+                    // environment at session start (mcp-bridge Requirement
+                    // 1.6 / task 10.2).
+                    let variable = format!("ODORI_CODEX_MCP_HEADER_{server_index}_{header_index}");
+                    rendered.env.push((variable.clone(), value.clone()));
+                    env_headers.insert(name.clone(), Value::String(variable));
                 }
                 if !env_headers.is_empty() {
                     rendered.config.insert(
@@ -775,7 +768,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tooling_renders_http_bearer_without_putting_token_in_config() {
+    fn tooling_renders_http_bearer_through_environment_header() {
         let mut tooling = TurnTooling::default();
         tooling.mcp_servers.push(McpServerConfig {
             name: "odori".into(),
@@ -793,10 +786,10 @@ mod tests {
             Some(&json!("http://127.0.0.1:1234/mcp"))
         );
         assert_eq!(
-            rendered
-                .config
-                .get("mcp_servers.odori.bearer_token_env_var"),
-            Some(&json!("ODORI_CODEX_MCP_BEARER_0"))
+            rendered.config.get("mcp_servers.odori.env_http_headers"),
+            Some(&json!({
+                "Authorization": "ODORI_CODEX_MCP_HEADER_0_0"
+            }))
         );
         assert_eq!(
             rendered.config.get("mcp_servers.odori.enabled_tools"),
@@ -819,7 +812,7 @@ mod tests {
         );
         assert_eq!(
             rendered.env,
-            vec![("ODORI_CODEX_MCP_BEARER_0".into(), "secret".into())]
+            vec![("ODORI_CODEX_MCP_HEADER_0_0".into(), "Bearer secret".into())]
         );
     }
 

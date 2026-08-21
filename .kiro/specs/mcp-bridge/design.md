@@ -12,8 +12,8 @@ Behaviour sources: the launch plan's execution model (run loop = workflow,
 turn = activity, update/signal in v0); harness ground truth from the
 claude-driver spike (claude 2.1.220; retired from the tree — its README
 survives in git history via PRs #1/#3, and its load-bearing findings are
-restated in `requirements.md` § Evidence) with Codex equivalents owed by
-lane C's PoC; the MCP specification for `tools/*` and progress
+restated in `requirements.md` § Evidence) and the Codex 0.148 PoC; the MCP
+specification for `tools/*` and progress
 notifications; requirements in `requirements.md` (this spec was authored
 design-first; the two documents are kept in sync).
 
@@ -138,8 +138,10 @@ pub struct HarnessAttachment {
 ### Provider attachment (`odori-providers`)
 
 Claude: `--mcp-config` (inline or temp file) + `--allowedTools`, plus MCP
-timeout pinning at spawn (Req 5.3). Codex: `mcp_servers` on session start;
-stdio re-exec shim as the committed fallback (Q1). Exit classification
+timeout pinning at spawn (Req 5.3). Codex: direct streamable HTTP through
+dotted `mcp_servers` config on session start/resume/fork; the full bearer
+header is named by `env_http_headers` and resolved from the app-server child
+environment. Exit classification
 extends the O3 4-tuple with "died awaiting MCP" (the bridge knows which
 invocations were pending at exit).
 

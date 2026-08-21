@@ -55,7 +55,9 @@ HTTP request. This is the working shape:
   "params": {
     "config": {
       "mcp_servers.odori.url": "http://127.0.0.1:8765/mcp",
-      "mcp_servers.odori.bearer_token_env_var": "ODORI_CODEX_MCP_BEARER_0",
+      "mcp_servers.odori.env_http_headers": {
+        "Authorization": "ODORI_CODEX_MCP_HEADER_0_0"
+      },
       "mcp_servers.odori.required": true,
       "mcp_servers.odori.enabled_tools": ["deploy"],
       "mcp_servers.odori.startup_timeout_sec": 10,
@@ -65,24 +67,15 @@ HTTP request. This is the working shape:
 }
 ```
 
-Set `ODORI_CODEX_MCP_BEARER_0` to the token **without** the `Bearer ` prefix on
-the app-server process. Codex adds the prefix. Static
-`mcp_servers.<id>.http_headers = {"Authorization": "Bearer ..."}` was also
-verified live, but the provider uses `bearer_token_env_var` so a per-attempt
-bridge token is not serialized into the thread config. Arbitrary headers can
-use `env_http_headers`, whose values name environment variables. The CLI
-equivalent is:
-
-```bash
-codex mcp add odori --url http://127.0.0.1:8765/mcp \
-  --bearer-token-env-var ODORI_CODEX_MCP_BEARER_0
-```
+Set `ODORI_CODEX_MCP_HEADER_0_0` to the complete `Bearer <token>` header value
+on the app-server process. `env_http_headers` maps each header name to its
+environment-variable name, so the per-attempt bridge token is not serialized
+into persisted thread configuration.
 
 The captured request carried
 `authorization: Bearer odori-probe-token` on `initialize`,
-`notifications/initialized`, `tools/list`, and `tools/call`. Stdio remains
-available through `mcp_servers.<id>.command`, `.args`, and `.env`, but the MCP
-bridge's Q1 fallback shim is **not required** for this Codex pin.
+`notifications/initialized`, `tools/list`, and `tools/call`. The bridge contract
+is direct streamable HTTP; no stdio re-exec shim is required.
 
 ### Tool-call identity — `_meta.callId`, and it regenerates after death
 

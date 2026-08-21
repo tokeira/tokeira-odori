@@ -80,15 +80,21 @@ reference.
   - Tag: `// Feature: mcp-bridge, Property 5: keepalive cadence bound`
   - _Requirements: 5.1, 5.2, 5.3_
 
-- [ ] 10. Provider attachment (`odori-providers`)
+- [x] 10. Provider attachment (`odori-providers`)
   - [x] 10.1 Claude spawn attachment
     - `--mcp-config` injection (server name per Q7), `--allowedTools`
       scoping, MCP timeout pinning at spawn.
     - _Requirements: 1.4, 1.5, 5.3_
-  - [ ] 10.2 Codex session attachment
-    - `mcp_servers` config on app-server session start; stdio re-exec shim
-      if Q1 resolves to the fallback.
+  - [x] 10.2 Codex session attachment
+    - Direct streamable HTTP `mcp_servers` config on app-server session
+      start/resume/fork: bridge URL plus complete bearer value resolved from
+      the child environment through `env_http_headers`.
     - _Requirements: 1.6_
+    - **DONE (2026-08-21, 64ef6a96160b):** `HarnessAttachment` now renders
+      into the Codex session's dotted `mcp_servers` overrides for every
+      session directive. The pinned `codex-cli 0.148.0-alpha.15` completed
+      the quota-gated direct-HTTP bridge run; no stdio re-exec shim is part
+      of the current contract.
   - [x] 10.3 Exit-classification extension
     - "Died awaiting MCP" folded into the O3 4-tuple; retryable turn
       failure; fork-vs-resume selection on retry per taxonomy.
@@ -119,13 +125,13 @@ reference.
   - Tag: `// Feature: mcp-bridge, Property 7: preview-off inertness`
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
 
-- [ ] 14. Integration
+- [x] 14. Integration
   - [x] 14.1 Scripted-harness crash-mid-turn recovery test
     - Deterministic fake harness against the embedded engine: kill at
       generated points (tool running, response unsent), assert §Recovery
       semantics end-to-end (resume, registry hits, fencing of stragglers).
     - _Requirements: 7.1, 7.2, 7.4, 3.1, 3.2, 3.3, 4.2_
-  - [x] 14.2 Live-harness bridged turn (Claude leg; Codex waits on 10.2)
+  - [x] 14.2 Live-harness bridged turn
     - One bridged tool call end-to-end per harness; ignored-by-default
       (subscription quota); part of the launch dry-run checklist. Must
       also observe the real harness MCP client against the bridge's SSE
@@ -133,14 +139,34 @@ reference.
       re-presents the same `_meta` call id (the scripted harness covers
       only the protocol shape the spec commits to).
     - _Requirements: 1.4, 1.5, 1.6, 1.7, 2.3, 3.2, 5.1_
+    - **DONE (2026-08-21, 64ef6a96160b):** Both harness legs are active
+      behind ignored-by-default quota markers. The Codex leg was run live
+      through the embedded engine and durable tool activity on
+      `codex-cli 0.148.0-alpha.15`. A 1.5-second first activity exceeded the
+      pinned one-second MCP timeout despite 250 ms progress frames; no
+      automatic same-id MCP replay was observed. The instructed retry
+      presented a new `tools/call`, changing from
+      `exec-023a21d8-5608-42e7-8a79-8ef735f4d604` to
+      `exec-c7f10c5f-5408-4f79-ae8b-37349f28aa75`. Registry same-id dedupe
+      therefore did not apply and the fresh identity executed as a second
+      durable invocation, confirming the documented tool-idempotency
+      obligation.
 
-- [ ] 16. Token-directory eviction (`odori-mcp-bridge`)
+- [x] 16. Token-directory eviction (`odori-mcp-bridge`)
   - The attachment directory retains one entry per turn-attempt for the
-    process lifetime (deliberate while the run lives — stale tokens must
-    resolve to be *fenced*, not 401). Evict a run's entries when its
-    workflow reaches a terminal state; keep the fencing property (P4) and
-    the fenced-not-401 behaviour under test.
+    workflow's live lifetime so stale tokens resolve to be *fenced*, not 401.
+    Evict all of a run's entries when its workflow reaches a terminal state;
+    keep the fencing property (P4) and the fenced-not-401 behaviour under
+    test.
   - _Requirements: 1.2, 1.3, 4.2_
+  - **DONE (2026-08-21, 64ef6a96160b):** One close-event observer per
+    workflow retains every attempt token through live-run fencing, then
+    evicts all of that workflow's entries only after a terminal outcome.
+    Infrastructure observation failures retain tokens and retry. The fake
+    lifecycle regression proves a live stale token reaches FENCED over HTTP
+    200 before all terminal-run tokens become 401; the embedded-engine test
+    proves the same eviction on a real workflow close event, while Property
+    4 remains green.
 
 - [x] 15. Checkpoint: full finish bar green
   - `cargo +nightly fmt --all`; clippy `-D warnings`; nextest; doctests;
@@ -158,16 +184,11 @@ reference.
 - External: O2 merged before 1; O3 merged before 10; engine-repo T2 available
   before 12/14; Q1 answered before 10.2 commits to a transport.
 
-## Ledger notes (implementation, 2026-08-20)
+## Ledger notes (implementation, updated 2026-08-21)
 
 Ticked tasks landed in the O6 implementation PR and the O3 provider PR.
-Still open, with cause:
-
-- **10.2 Codex attachment** — blocked on lane C's Q1 transport answers; the
-  stdio shim already renders (`claude_flags` covers both transports). The
-  Codex leg of 14.2 travels with it.
-- **16 Token-directory eviction** — the O6 PR's residual, filed here rather
-  than living only in the PR body.
+The O6 completion residuals, 10.2 and 16, closed in `64ef6a96160b`; closing
+10.2 also completed 14.2's Codex leg and therefore parents 10 and 14.
 
 O3 closures (2026-08-21): 10.3 landed as the additive
 `TurnError::HarnessDiedAwaitingTools` variant, detected provider-side from

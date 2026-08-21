@@ -12,7 +12,7 @@
 //! tokens.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -85,11 +85,14 @@ pub(crate) struct BridgeInner {
     registry: Arc<AgentRegistry>,
     broker: CallBroker,
     config: BridgeConfig,
-    /// Bearer token → the attachment it was minted for. Entries are
-    /// intentionally retained for the run's lifetime: a stale token must
-    /// keep resolving so its calls reach the registry and get *fenced*
+    /// Bearer token → the attachment it was minted for. Entries remain until
+    /// the workflow is confirmed terminal: while a run is live, a stale token
+    /// must keep resolving so its calls reach the registry and get *fenced*
     /// (a 401 would be indistinguishable from misconfiguration).
     directory: Mutex<HashMap<String, RunContext>>,
+    /// Workflow ids with one active close-event observer. One observer owns
+    /// eviction for all turn-attempt tokens belonging to the run.
+    terminal_watchers: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for BridgeInner {
@@ -115,6 +118,39 @@ impl BridgeInner {
             .expect("directory lock")
             .get(token)
             .cloned()
+    }
+
+    fn watch_terminal(self: &Arc<Self>, workflow_id: &str) {
+        if !self
+            .terminal_watchers
+            .lock()
+            .expect("terminal watcher lock")
+            .insert(workflow_id.to_owned())
+        {
+            return;
+        }
+
+        let inner = Arc::downgrade(self);
+        let broker = self.broker.clone();
+        let workflow_id = workflow_id.to_owned();
+        tokio::spawn(async move {
+            broker.wait_for_terminal(&workflow_id).await;
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            let removed = {
+                let mut directory = inner.directory.lock().expect("directory lock");
+                let before = directory.len();
+                directory.retain(|_, context| context.workflow_id != workflow_id);
+                before - directory.len()
+            };
+            inner
+                .terminal_watchers
+                .lock()
+                .expect("terminal watcher lock")
+                .remove(&workflow_id);
+            tracing::debug!(workflow_id, removed, "evicted terminal run bridge tokens");
+        });
     }
 
     /// The `tools/list` payload for the context's agent: unqualified names
@@ -166,6 +202,7 @@ impl Bridge {
             broker: CallBroker::new(client, config.keepalive),
             config,
             directory: Mutex::new(HashMap::new()),
+            terminal_watchers: Mutex::new(HashSet::new()),
         });
         tokio::spawn(crate::server::serve(inner.clone(), listener));
         Ok(Self { inner, url })
@@ -199,6 +236,7 @@ impl AttachmentSource for Bridge {
                 attempt: identity.attempt,
             },
         );
+        self.inner.watch_terminal(workflow_id);
         let server = &self.inner.config.server_name;
         Some(TurnAttachment::new(
             McpServerConfig {
