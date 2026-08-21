@@ -7,7 +7,7 @@
 //! implementing `.kiro/specs/mcp-bridge/`:
 //!
 //! - `attach::Bridge` — the in-process streamable-HTTP MCP server on
-//!   loopback, per-attempt bearer tokens, and the [`AttachmentSource`]
+//!   loopback, per-attempt bearer tokens, and the `AttachmentSource`
 //!   implementation the turn activities consume;
 //! - `broker::CallBroker` — `tools/call` → workflow update translation
 //!   with keepalive progress (record-before-respond is structural: only a
@@ -19,9 +19,9 @@
 //! The `preview` feature is the descope boundary (spec Requirement 8):
 //! with it off this crate compiles to nothing — no listener, no
 //! attachment, no bridge code on any path — and framework tools delegate
-//! to the harness's own tooling.
-//!
-//! [`AttachmentSource`]: odori_agents::provider::AttachmentSource
+//! to the harness's own tooling. (Module references above are plain code
+//! spans, not links: the modules exist only under `preview`, and the
+//! preview-off rustdoc build must stay warning-free.)
 
 #[cfg(feature = "preview")]
 pub mod attach;

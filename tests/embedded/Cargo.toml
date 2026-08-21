@@ -17,6 +17,7 @@ odori = { path = "../../crates/odori" }
 odori-agents = { path = "../../crates/odori-agents" }
 odori-engine = { path = "../../crates/odori-engine", features = ["preview"] }
 odori-mcp-bridge = { path = "../../crates/odori-mcp-bridge", features = ["preview"] }
+odori-providers = { path = "../../crates/odori-providers" }
 
 [dev-dependencies]
 anyhow = "1"

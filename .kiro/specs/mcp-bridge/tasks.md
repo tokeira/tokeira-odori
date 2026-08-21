@@ -89,12 +89,12 @@ reference.
     - `mcp_servers` config on app-server session start; stdio re-exec shim
       if Q1 resolves to the fallback.
     - _Requirements: 1.6_
-  - [ ] 10.3 Exit-classification extension
+  - [x] 10.3 Exit-classification extension
     - "Died awaiting MCP" folded into the O3 4-tuple; retryable turn
       failure; fork-vs-resume selection on retry per taxonomy.
     - _Requirements: 6.4, 6.5, 7.1, 7.3_
 
-- [ ] 11. Property test: Property 6 — failure classes are preserved
+- [x] 11. Property test: Property 6 — failure classes are preserved
   - Generated failure injections (tool exhaustion, update fault, harness
     death) against the taxonomy mapping; ≥100 iterations, spanning
     `odori-mcp-bridge` + `odori-providers`.
@@ -125,7 +125,7 @@ reference.
       generated points (tool running, response unsent), assert §Recovery
       semantics end-to-end (resume, registry hits, fencing of stragglers).
     - _Requirements: 7.1, 7.2, 7.4, 3.1, 3.2, 3.3, 4.2_
-  - [ ] 14.2 Live-harness bridged turn (both providers, pinned versions)
+  - [x] 14.2 Live-harness bridged turn (Claude leg; Codex waits on 10.2)
     - One bridged tool call end-to-end per harness; ignored-by-default
       (subscription quota); part of the launch dry-run checklist. Must
       also observe the real harness MCP client against the bridge's SSE
@@ -160,20 +160,27 @@ reference.
 
 ## Ledger notes (implementation, 2026-08-20)
 
-Ticked tasks landed in the O6 implementation PR. Still open, with cause:
+Ticked tasks landed in the O6 implementation PR and the O3 provider PR.
+Still open, with cause:
 
 - **10.2 Codex attachment** — blocked on lane C's Q1 transport answers; the
-  stdio shim already renders (`claude_flags` covers both transports).
-- **10.3 Exit-classification extension** — coordinates with the O3 driver's
-  4-tuple (cross-lane TODO sanctioned by the campaign board).
-- **11 Property 6** — travels with 10.3 (the harness-death leg needs the O3
-  classification); the tool-failure and bridge-failure legs are covered
-  meanwhile by the update-handler behaviour and the server error-table
-  units.
-- **14.2 Live-harness bridged turn** — lands behind the ignored-by-default
-  marker once O3 merges; carries the real-harness SSE/retry observation.
+  stdio shim already renders (`claude_flags` covers both transports). The
+  Codex leg of 14.2 travels with it.
 - **16 Token-directory eviction** — the O6 PR's residual, filed here rather
   than living only in the PR body.
+
+O3 closures (2026-08-21): 10.3 landed as the additive
+`TurnError::HarnessDiedAwaitingTools` variant, detected provider-side from
+`tool_use` events no `tool_result` answered before death. 11 landed as a
+256-case property suite over the provider's pure classification (the tool-
+and bridge-failure legs were already proven in the O6 suites). 14.2's
+Claude leg landed behind the ignored-by-default marker AND was run live
+(claude 2.1.237, drifted from the 2.1.220 pin — protocol tolerance held;
+drift warning fired as designed): real harness turn through the embedded
+engine, and a real bridged `record_fact` call executed exactly once as a
+durable activity with its receipt in the run's final answer. The
+real-harness SSE observation from 14.2's scope: the CLI's MCP client
+consumed the bridge's SSE `tools/call` responses cleanly end to end.
 
 Decisions taken during implementation (mirrored in requirements.md):
 **Q4** closed as 256 KiB cap-and-fail (`BridgeConfig::max_result_bytes`,

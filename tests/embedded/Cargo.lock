@@ -3047,6 +3047,7 @@ dependencies = [
  "odori-agents",
  "odori-engine",
  "odori-mcp-bridge",
+ "odori-providers",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

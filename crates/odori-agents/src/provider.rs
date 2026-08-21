@@ -391,6 +391,25 @@ pub enum TurnError {
         /// First line of captured stderr, for diagnostics.
         stderr_head: String,
     },
+    /// The backend process died with bridge tool calls still awaiting
+    /// their MCP responses (mcp-bridge spec Requirement 6.5 / task 10.3):
+    /// the provider observed `tool_use` events for bridge tools that no
+    /// `tool_result` answered before death. Retryable — the in-flight
+    /// executions run to completion and record, and the resumed session's
+    /// replay is served from the registry. Additive taxonomy growth on the
+    /// frozen seam (the enum is `non_exhaustive` for exactly this).
+    #[error(
+        "harness died awaiting {} bridge tool call(s) (exit {exit_code:?})",
+        pending_calls.len()
+    )]
+    HarnessDiedAwaitingTools {
+        /// Process exit code; `None` when killed by a signal.
+        exit_code: Option<i32>,
+        /// First line of captured stderr, for diagnostics.
+        stderr_head: String,
+        /// The harness call ids that were awaiting MCP responses at death.
+        pending_calls: Vec<String>,
+    },
     /// Spawn or configuration defect (binary missing, bad flags, invalid
     /// attachment). Non-retryable: retrying reproduces it.
     #[error("provider configuration error: {message}")]
@@ -420,6 +439,7 @@ impl TurnError {
         match self {
             TurnError::Api { .. }
             | TurnError::HarnessDied { .. }
+            | TurnError::HarnessDiedAwaitingTools { .. }
             | TurnError::Timeout { .. }
             | TurnError::Tooling { .. } => true,
             TurnError::SessionNotFound { .. } | TurnError::Config { .. } => false,
@@ -434,6 +454,9 @@ impl TurnError {
             TurnError::Api { .. } => "odori::turn::api",
             TurnError::SessionNotFound { .. } => "odori::turn::session_not_found",
             TurnError::HarnessDied { .. } => "odori::turn::harness_died",
+            TurnError::HarnessDiedAwaitingTools { .. } => {
+                "odori::turn::harness_died_awaiting_tools"
+            }
             TurnError::Config { .. } => "odori::turn::config",
             TurnError::Timeout { .. } => "odori::turn::timeout",
             TurnError::Tooling { .. } => "odori::turn::tooling",
