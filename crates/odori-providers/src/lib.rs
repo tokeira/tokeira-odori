@@ -28,9 +28,15 @@
 //! frozen early (launch plan: EOD day 22) so provider implementations can
 //! proceed in parallel behind a stable surface.
 
+#[cfg(any(feature = "api-anthropic", feature = "api-openai"))]
+pub mod api;
 pub mod claude;
 pub mod claude_flags;
 pub mod codex;
 
+#[cfg(feature = "api-anthropic")]
+pub use api::anthropic::{AnthropicConfig, AnthropicProvider};
+#[cfg(feature = "api-openai")]
+pub use api::openai::{OpenAiConfig, OpenAiProvider};
 pub use claude::{ClaudeConfig, ClaudeProvider, PINNED_VERSION};
 pub use codex::{CodexProvider, EXPECTED_CODEX_CLI_VERSION};

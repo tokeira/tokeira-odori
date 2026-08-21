@@ -53,6 +53,16 @@ hyper-util = { version = "0.1", features = ["server", "tokio"] }
 # correctness properties P1-P7 are required PBT suites (engine repo pins the
 # same line).
 proptest = "1"
+# API-tier HTTP client (behind the api-* provider features only). Default
+# features OFF is load-bearing, mirroring the engine repo: rustls everywhere,
+# no native-tls / OpenSSL dynamic linking.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "charset",
+    "http2",
+    "stream",
+] }
 futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

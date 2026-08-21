@@ -23,6 +23,9 @@ tokio = { workspace = true }
 # Forwarding switch for the mcp-bridge (spec Requirement 8): enables the
 # bridge crate and the engine wiring together.
 preview = ["odori-engine/preview", "odori-mcp-bridge/preview"]
+# The API-backed secondary provider tier, off by default (subscription-first).
+api-anthropic = ["odori-providers/api-anthropic"]
+api-openai = ["odori-providers/api-openai"]
 
 [lints]
 workspace = true
