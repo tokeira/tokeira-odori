@@ -22,7 +22,11 @@
 //! ([`TurnTooling::mcp_timeout`]), and the exit-classification taxonomy
 //! ([`TurnError`], from the claude-driver spike's 4-tuple).
 
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -50,6 +54,12 @@ use tokio::sync::mpsc;
 /// - **Scrub the environment.** Subprocess providers must clear inherited
 ///   vendor transport/credential variables before spawn (claude-driver
 ///   spike finding: an inherited `ANTHROPIC_BASE_URL` fails auth hard).
+/// - **Report usage snapshots.** As accounting becomes available, call
+///   [`TurnEventSink::report_usage`]. The activity records the latest snapshot
+///   in heartbeat details. **Usage includes failed-attempt spend via heartbeat
+///   carryover:** a retried attempt folds the prior snapshot into its successful
+///   [`TurnOutcome::usage`]. A retryable failure before the first snapshot
+///   therefore contributes zero incremental spend.
 #[async_trait]
 pub trait Provider: fmt::Debug + Send + Sync + 'static {
     /// Stable identifier used in agent configuration and diagnostics
@@ -287,18 +297,55 @@ impl TurnAttachment {
 #[derive(Debug, Clone)]
 pub struct TurnEventSink {
     sender: mpsc::Sender<TurnEvent>,
+    /// Latest cumulative snapshot for this activity attempt. This path is
+    /// deliberately separate from the lossy event channel: accounting must
+    /// survive a full liveness queue so it can be flushed to heartbeat
+    /// details before the attempt returns.
+    usage: Option<Arc<Mutex<TurnUsage>>>,
 }
 
 impl TurnEventSink {
     /// Wrap a channel sender. The receiving half belongs to the runner's
     /// turn activity, which forwards events into activity heartbeats.
     pub fn new(sender: mpsc::Sender<TurnEvent>) -> Self {
-        Self { sender }
+        Self {
+            sender,
+            usage: None,
+        }
+    }
+
+    pub(crate) fn tracked(sender: mpsc::Sender<TurnEvent>) -> (Self, Arc<Mutex<TurnUsage>>) {
+        let usage = Arc::new(Mutex::new(TurnUsage::default()));
+        (
+            Self {
+                sender,
+                usage: Some(usage.clone()),
+            },
+            usage,
+        )
     }
 
     /// Emit an event, dropping it if the receiver is full or gone.
     pub fn emit(&self, event: TurnEvent) {
         let _ = self.sender.try_send(event);
+    }
+
+    /// Publish the latest cumulative usage for this provider attempt.
+    ///
+    /// This is a snapshot, not a delta: later calls replace earlier ones.
+    /// The turn activity combines the final snapshot with prior-attempt
+    /// heartbeat details. Direct provider callers that construct a sink with
+    /// [`TurnEventSink::new`] still receive usage in [`TurnOutcome`]; snapshot
+    /// tracking is active when the runner owns the sink.
+    pub fn report_usage(&self, usage: TurnUsage) {
+        if let Some(latest) = &self.usage {
+            *latest.lock().expect("turn usage snapshot lock") = usage;
+        }
+        // A snapshot is itself proof of liveness. This also wakes the
+        // activity's event pump so it records the new details promptly;
+        // if the lossy queue is already full, a queued event will sample the
+        // latest value from the separate non-lossy tracker.
+        self.emit(TurnEvent::Liveness);
     }
 }
 
@@ -332,7 +379,9 @@ pub struct TurnOutcome {
     pub session_id: String,
     /// The turn's final text. Typed-output parsing happens runner-side.
     pub text: String,
-    /// Cost and volume accounting, best-effort per backend.
+    /// Cost and volume accounting, best-effort per backend. When observed by
+    /// the workflow this includes failed-attempt spend recovered from
+    /// heartbeat details, plus the successful attempt's own usage.
     pub usage: TurnUsage,
 }
 
@@ -349,8 +398,9 @@ impl TurnOutcome {
 
 /// Best-effort turn accounting, used by the runner's budget guardrails.
 ///
-/// `None` means the backend did not report the figure — the budget
-/// enforcement treats unknown as zero and says so in its docs.
+/// `None` means the backend did not report the figure. Budget accounting
+/// records that turn as unknown and counts it against turn caps; it never
+/// silently converts unknown token or cost usage into a reported zero.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TurnUsage {

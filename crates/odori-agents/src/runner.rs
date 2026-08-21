@@ -112,6 +112,7 @@ impl Runner {
                     agent: agent.to_owned(),
                     prompt: prompt.to_owned(),
                     config,
+                    handoff: None,
                 },
                 WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned()).build(),
             )
@@ -137,6 +138,7 @@ impl Runner {
                     agent: agent.to_owned(),
                     prompt: prompt.to_owned(),
                     config,
+                    handoff: None,
                 },
                 WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned()).build(),
             )

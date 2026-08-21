@@ -171,6 +171,13 @@ impl BridgeInner {
                             "inputSchema": tool.input_schema(),
                         })
                     })
+                    .chain(agent.handoffs().iter().map(|handoff| {
+                        json!({
+                            "name": handoff.tool_name(),
+                            "description": handoff.description(),
+                            "inputSchema": handoff.input_schema(),
+                        })
+                    }))
                     .collect()
             })
             .unwrap_or_default();
@@ -222,7 +229,7 @@ impl AttachmentSource for Bridge {
         agent_name: &str,
     ) -> Option<TurnAttachment> {
         let agent = self.inner.registry.get(agent_name).ok()?;
-        if agent.tools().is_empty() {
+        if agent.tools().is_empty() && agent.handoffs().is_empty() {
             return None;
         }
         // A fresh token per attempt (module docs: fencing depends on it).
@@ -251,6 +258,12 @@ impl AttachmentSource for Bridge {
                 .tools()
                 .iter()
                 .map(|tool| format!("mcp__{server}__{}", tool.name()))
+                .chain(
+                    agent
+                        .handoffs()
+                        .iter()
+                        .map(|handoff| format!("mcp__{server}__{}", handoff.tool_name())),
+                )
                 .collect(),
         ))
     }

@@ -70,6 +70,7 @@ async fn echo_turn_captures_result_session_usage_and_events() {
     assert_eq!(outcome.session_id, "sess-fake");
     assert_eq!(outcome.usage.total_cost_usd, Some(0.02));
     assert_eq!(outcome.usage.input_tokens, Some(7));
+    assert_eq!(outcome.usage.output_tokens, Some(3));
     assert_eq!(outcome.usage.duration, Some(Duration::from_millis(40)));
     assert_eq!(provider.detected_version(), Some(PINNED_VERSION));
 

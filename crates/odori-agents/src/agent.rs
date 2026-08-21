@@ -14,7 +14,8 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    guardrail::Guardrail,
+    guardrail::{Guardrail, RunBudget},
+    handoff::Handoff,
     provider::{AgentDirectives, TurnTooling},
     tool::Tool,
 };
@@ -27,10 +28,12 @@ pub struct Agent {
     provider: Option<String>,
     model: Option<String>,
     tools: Vec<Tool>,
+    handoffs: Vec<Handoff>,
     allowed_native_tools: Option<Vec<String>>,
     input_guardrails: Vec<Arc<dyn Guardrail>>,
     output_guardrails: Vec<Arc<dyn Guardrail>>,
     output_schema: Option<Value>,
+    budget: RunBudget,
 }
 
 impl Agent {
@@ -42,10 +45,12 @@ impl Agent {
             provider: None,
             model: None,
             tools: Vec::new(),
+            handoffs: Vec::new(),
             allowed_native_tools: None,
             input_guardrails: Vec::new(),
             output_guardrails: Vec::new(),
             output_schema: None,
+            budget: RunBudget::unlimited(),
         }
     }
 
@@ -66,6 +71,12 @@ impl Agent {
     /// [`crate::tool`]).
     pub fn with_tool(mut self, tool: Tool) -> Self {
         self.tools.push(tool);
+        self
+    }
+
+    /// Offer a durable handoff to another registered agent.
+    pub fn with_handoff(mut self, handoff: Handoff) -> Self {
+        self.handoffs.push(handoff);
         self
     }
 
@@ -99,6 +110,13 @@ impl Agent {
         self
     }
 
+    /// Apply agent-level run caps. Runner-level caps compose by taking the
+    /// stricter value for each dimension.
+    pub fn with_budget(mut self, budget: RunBudget) -> Self {
+        self.budget = budget;
+        self
+    }
+
     /// The agent's name.
     pub fn name(&self) -> &str {
         &self.name
@@ -114,6 +132,11 @@ impl Agent {
         &self.tools
     }
 
+    /// Registered handoffs exposed as framework tools.
+    pub fn handoffs(&self) -> &[Handoff] {
+        &self.handoffs
+    }
+
     /// Guardrails applied to run input.
     pub fn input_guardrails(&self) -> &[Arc<dyn Guardrail>] {
         &self.input_guardrails
@@ -122,6 +145,11 @@ impl Agent {
     /// Guardrails applied to turn output.
     pub fn output_guardrails(&self) -> &[Arc<dyn Guardrail>] {
         &self.output_guardrails
+    }
+
+    /// This agent's own run caps.
+    pub fn budget(&self) -> &RunBudget {
+        &self.budget
     }
 
     /// The serializable directives a provider receives for this agent.
@@ -144,6 +172,11 @@ impl Agent {
                 .tools
                 .iter()
                 .map(|tool| tool.name().to_owned())
+                .chain(
+                    self.handoffs
+                        .iter()
+                        .map(|handoff| handoff.tool_name().to_owned()),
+                )
                 .collect(),
             ..TurnTooling::default()
         }
@@ -222,6 +255,7 @@ mod tests {
             Agent::new("helper", "assist")
                 .with_model("m1")
                 .with_input_guardrail(NoPirates)
+                .with_handoff(Handoff::new("specialist"))
                 .with_allowed_native_tools(["Bash"]),
         );
         let agent = registry.get("helper").expect("registered");
@@ -231,6 +265,10 @@ mod tests {
             Some(vec!["Bash".to_owned()])
         );
         assert_eq!(agent.input_guardrails().len(), 1);
+        assert_eq!(
+            agent.tooling().framework_tools,
+            vec!["transfer_to_specialist".to_owned()]
+        );
         assert!(registry.get("missing").is_err());
     }
 }

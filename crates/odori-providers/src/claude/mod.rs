@@ -35,6 +35,7 @@ use std::{
 use async_trait::async_trait;
 use odori_agents::provider::{
     Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
+    TurnUsage,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
@@ -317,6 +318,7 @@ impl Provider for ClaudeProvider {
                 StreamEvent::Result(result) => {
                     // Terminal semantically, but not always the last line:
                     // keep draining to EOF for trailing summaries.
+                    events.report_usage(result_usage(&result));
                     terminal = Some(result);
                 }
                 StreamEvent::Other(_) => {}
@@ -387,10 +389,7 @@ fn classify(
             session_id.unwrap_or_else(|| result.session_id.clone()),
             result.result.clone().unwrap_or_default(),
         );
-        outcome.usage.total_cost_usd = result.total_cost_usd;
-        outcome.usage.input_tokens = result.usage.as_ref().and_then(|usage| usage.input_tokens);
-        outcome.usage.output_tokens = result.usage.as_ref().and_then(|usage| usage.output_tokens);
-        outcome.usage.duration = result.duration_ms.map(Duration::from_millis);
+        outcome.usage = result_usage(&result);
         return Ok(outcome);
     }
 
@@ -435,6 +434,15 @@ fn classify(
             result.terminal_reason.as_deref().unwrap_or("unspecified"),
         ),
     })
+}
+
+fn result_usage(result: &ResultEvent) -> TurnUsage {
+    let mut usage = TurnUsage::default();
+    usage.total_cost_usd = result.total_cost_usd;
+    usage.input_tokens = result.usage.as_ref().and_then(|value| value.input_tokens);
+    usage.output_tokens = result.usage.as_ref().and_then(|value| value.output_tokens);
+    usage.duration = result.duration_ms.map(Duration::from_millis);
+    usage
 }
 
 /// The operator-empathy error for a missing or unspawnable harness.

@@ -13,6 +13,7 @@
 use async_trait::async_trait;
 use odori_agents::provider::{
     Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
+    TurnUsage,
 };
 use serde_json::{Value, json};
 
@@ -165,6 +166,11 @@ impl Provider for OpenAiProvider {
                 .await?;
             total_input += exchange.input_tokens;
             total_output += exchange.output_tokens;
+            let mut usage = TurnUsage::default();
+            usage.input_tokens = Some(total_input);
+            usage.output_tokens = Some(total_output);
+            usage.duration = Some(started.elapsed());
+            events.report_usage(usage);
             if let Some(error) = exchange.status_error {
                 return Err(TurnError::Api {
                     message: format!("the response ended in error: {error}"),

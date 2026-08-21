@@ -45,7 +45,8 @@ use std::{collections::VecDeque, sync::Arc, time::Duration};
 use serde::{Deserialize, Serialize};
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
+    ActivityOptions, ChildWorkflowOptions, SyncWorkflowContext, WorkflowContext,
+    WorkflowContextView, WorkflowResult,
     activities::{ActivityContext, ActivityError},
     error::ApplicationFailure,
 };
@@ -55,6 +56,7 @@ use tokio::sync::mpsc;
 use crate::{
     agent::AgentRegistry,
     guardrail::{GuardrailVerdict, RunBudget},
+    handoff::{Handoff, HandoffContext},
     invocation::{Admission, InvocationId, InvocationRegistry, ToolCallResult},
     provider::{
         Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnIdentity, TurnOutcome,
@@ -72,6 +74,9 @@ pub struct RunInput {
     pub prompt: String,
     /// Run-level configuration.
     pub config: RunConfig,
+    /// Context supplied by the parent when this run is a handoff child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<HandoffContext>,
 }
 
 /// Run-level configuration, all fields defaulted.
@@ -156,6 +161,7 @@ pub struct TurnRecord {
 
 /// Aggregated run accounting.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct RunUsage {
     /// Sum of reported turn costs, USD.
@@ -164,13 +170,44 @@ pub struct RunUsage {
     pub input_tokens: u64,
     /// Sum of reported output tokens.
     pub output_tokens: u64,
+    /// Completed turns for which either token figure was unknown.
+    pub turns_with_unknown_tokens: u32,
+    /// Completed turns for which cost was unknown.
+    pub turns_with_unknown_cost: u32,
 }
 
 impl RunUsage {
-    fn absorb(&mut self, turn: &TurnUsage) {
-        self.total_cost_usd += turn.total_cost_usd.unwrap_or(0.0);
-        self.input_tokens += turn.input_tokens.unwrap_or(0);
-        self.output_tokens += turn.output_tokens.unwrap_or(0);
+    fn absorb_turn(&mut self, turn: &TurnUsage) {
+        match turn.total_cost_usd {
+            Some(cost) => self.total_cost_usd += cost,
+            None => self.turns_with_unknown_cost += 1,
+        }
+        match (turn.input_tokens, turn.output_tokens) {
+            (Some(input), Some(output)) => {
+                self.input_tokens += input;
+                self.output_tokens += output;
+            }
+            _ => {
+                // Policy: an incomplete token total counts as an unknown
+                // turn, not a partial token amount. It is never silently
+                // converted to a reported zero.
+                self.turns_with_unknown_tokens += 1;
+            }
+        }
+    }
+
+    fn absorb_run(&mut self, child: &Self) {
+        self.total_cost_usd += child.total_cost_usd;
+        self.input_tokens += child.input_tokens;
+        self.output_tokens += child.output_tokens;
+        self.turns_with_unknown_tokens += child.turns_with_unknown_tokens;
+        self.turns_with_unknown_cost += child.turns_with_unknown_cost;
+    }
+
+    /// Total reported input + output tokens. Unknown turns are called out by
+    /// [`RunUsage::turns_with_unknown_tokens`], not represented as zero.
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens.saturating_add(self.output_tokens)
     }
 }
 
@@ -182,9 +219,10 @@ pub enum RunEnd {
     Completed,
     /// An interactive run was ended by `end_conversation`.
     ConversationEnded,
-    /// A budget cap tripped before the next turn.
+    /// A budget cap was exhausted before the next turn or crossed by the
+    /// aggregate turn that was already in flight.
     BudgetExceeded {
-        /// Which cap tripped.
+        /// Which cap tripped, including recorded spend and configured limit.
         cap: BudgetCap,
     },
     /// A guardrail rejected run input or turn output.
@@ -197,12 +235,29 @@ pub enum RunEnd {
 }
 
 /// The budget dimension that ended a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum BudgetCap {
-    /// [`RunBudget::max_turns`].
-    Turns,
+    /// [`RunBudget::max_turns`], measured across direct and delegated turns.
+    Turns {
+        /// Completed turns.
+        spent: u32,
+        /// Configured maximum.
+        cap: u32,
+    },
+    /// [`RunBudget::max_total_tokens`].
+    TotalTokens {
+        /// Reported input + output tokens.
+        spent: u64,
+        /// Configured maximum.
+        cap: u64,
+    },
     /// [`RunBudget::max_cost_usd`].
-    CostUsd,
+    CostUsd {
+        /// Reported cost.
+        spent: f64,
+        /// Configured maximum.
+        cap: f64,
+    },
 }
 
 /// The result of a run.
@@ -214,9 +269,9 @@ pub struct RunOutput {
     /// Session id of the last completed turn — the resume point for a
     /// follow-on run.
     pub session_id: Option<String>,
-    /// Aggregated usage.
+    /// Aggregated usage across direct turns and all handoff children.
     pub usage: RunUsage,
-    /// Number of completed turns.
+    /// Number of completed direct and delegated turns.
     pub turns: u32,
     /// Why the run ended.
     pub end: RunEnd,
@@ -241,6 +296,11 @@ pub struct AgentRun {
     agent_name: Option<String>,
     /// The mcp-bridge invocation registry (spec Requirements 3 and 4).
     invocations: InvocationRegistry,
+    /// Effective runner/agent caps, retained for handoff child budgeting.
+    effective_budget: Option<RunBudget>,
+    /// Completed handoff children. Kept in workflow state so the parent run
+    /// can absorb their recorded usage after its in-flight turn completes.
+    delegated: Vec<RunOutput>,
 }
 
 impl AgentRun {
@@ -272,9 +332,15 @@ impl AgentRun {
             )
         })?;
 
-        ctx.state_mut(|state| state.agent_name = Some(input.agent.clone()));
+        let effective_budget = input.config.budget.intersect(agent.budget());
+        ctx.state_mut(|state| {
+            state.agent_name = Some(input.agent.clone());
+            state.effective_budget = Some(effective_budget.clone());
+        });
 
         let mut usage = RunUsage::default();
+        let mut budget_turns = 0_u32;
+        let mut delegated_cursor = 0_usize;
         let end;
 
         // Input guardrails, before any spend.
@@ -296,20 +362,8 @@ impl AgentRun {
             let turn_index = ctx.state(|state| state.transcript.len() as u32);
 
             // Budget gates, between turns.
-            if let Some(max) = input.config.budget.max_turns
-                && turn_index >= max
-            {
-                end = RunEnd::BudgetExceeded {
-                    cap: BudgetCap::Turns,
-                };
-                break;
-            }
-            if let Some(max) = input.config.budget.max_cost_usd
-                && usage.total_cost_usd >= max
-            {
-                end = RunEnd::BudgetExceeded {
-                    cap: BudgetCap::CostUsd,
-                };
+            if let Some(cap) = pre_turn_budget_cap(&effective_budget, &usage, budget_turns) {
+                end = RunEnd::BudgetExceeded { cap };
                 break;
             }
 
@@ -343,7 +397,14 @@ impl AgentRun {
                 )
                 .await?;
 
-            usage.absorb(&outcome.usage);
+            usage.absorb_turn(&outcome.usage);
+            budget_turns = budget_turns.saturating_add(1);
+            let delegated = ctx.state(|state| state.delegated[delegated_cursor..].to_vec());
+            delegated_cursor += delegated.len();
+            for child in delegated {
+                usage.absorb_run(&child.usage);
+                budget_turns = budget_turns.saturating_add(child.turns);
+            }
             let record = TurnRecord {
                 turn: turn_index,
                 input: turn_input,
@@ -352,6 +413,14 @@ impl AgentRun {
                 usage: outcome.usage.clone(),
             };
             ctx.state_mut(|state| state.transcript.push(record));
+
+            // Token/cost spend and delegated turns can cross a cap while one
+            // aggregate turn is in flight. Record that turn first, then end
+            // cleanly with its complete accounting.
+            if let Some(cap) = post_turn_budget_cap(&effective_budget, &usage, budget_turns) {
+                end = RunEnd::BudgetExceeded { cap };
+                break;
+            }
 
             // Output guardrails.
             if let Some((name, reason)) = trip(agent.output_guardrails(), &outcome.text) {
@@ -381,7 +450,7 @@ impl AgentRun {
             }
         }
 
-        let (text, session_id, turns) = ctx.state(|state| {
+        let (text, session_id) = ctx.state(|state| {
             (
                 state
                     .transcript
@@ -392,14 +461,13 @@ impl AgentRun {
                     .transcript
                     .last()
                     .map(|record| record.session_id.clone()),
-                state.transcript.len() as u32,
             )
         });
         Ok(RunOutput {
             text,
             session_id,
             usage,
-            turns,
+            turns: budget_turns,
             end,
         })
     }
@@ -452,14 +520,19 @@ impl AgentRun {
                 Err(_) => return ToolInvocationReply::Rejected(InvocationRejection::UnknownTool),
             }
         };
-        let Some(policy) = agent
+        let tool_policy = agent
             .tools()
             .iter()
             .find(|tool| tool.name() == invocation.tool)
-            .map(|tool| tool.policy().clone())
-        else {
+            .map(|tool| tool.policy().clone());
+        let handoff = agent
+            .handoffs()
+            .iter()
+            .find(|handoff| handoff.tool_name() == invocation.tool)
+            .cloned();
+        if tool_policy.is_none() && handoff.is_none() {
             return ToolInvocationReply::Rejected(InvocationRejection::UnknownTool);
-        };
+        }
 
         let admission = ctx.state_mut(|state| {
             state
@@ -486,31 +559,232 @@ impl AgentRun {
                 }
             }
             Admission::Execute(ticket) => {
-                let outcome: Result<ToolCallResult, _> = ctx
-                    .execute_activity(
-                        ToolActivities::execute_tool,
-                        ExecuteToolInput {
-                            agent: agent.name().to_owned(),
-                            tool: invocation.tool.clone(),
-                            arguments: invocation.arguments.clone(),
-                            identity: invocation.identity.clone(),
-                        },
-                        tool_activity_options(&policy),
-                    )
-                    .await;
-                // Tool retry exhaustion is a MODEL-VISIBLE tool failure
-                // (spec Requirement 6.1), recorded like any result so
-                // replays serve it identically; it never fails the turn
-                // (Requirement 6.2).
-                let result = match outcome {
-                    Ok(result) => result,
-                    Err(error) => ToolCallResult::error(format!("tool execution failed: {error}")),
+                let result = match (tool_policy, handoff) {
+                    (Some(policy), _) => {
+                        let outcome: Result<ToolCallResult, _> = ctx
+                            .execute_activity(
+                                ToolActivities::execute_tool,
+                                ExecuteToolInput {
+                                    agent: agent.name().to_owned(),
+                                    tool: invocation.tool.clone(),
+                                    arguments: invocation.arguments.clone(),
+                                    identity: invocation.identity.clone(),
+                                },
+                                tool_activity_options(&policy),
+                            )
+                            .await;
+                        // Tool retry exhaustion is a MODEL-VISIBLE tool failure
+                        // (spec Requirement 6.1), recorded like any result so
+                        // replays serve it identically; it never fails the turn
+                        // (Requirement 6.2).
+                        match outcome {
+                            Ok(result) => result,
+                            Err(error) => {
+                                ToolCallResult::error(format!("tool execution failed: {error}"))
+                            }
+                        }
+                    }
+                    (None, Some(handoff)) => {
+                        execute_handoff(ctx, agent.name(), &handoff, &invocation).await
+                    }
+                    (None, None) => unreachable!("tool kind validated above"),
                 };
                 ctx.state_mut(|state| state.invocations.complete(ticket, result.clone()));
                 ToolInvocationReply::Completed(result)
             }
         }
     }
+}
+
+async fn execute_handoff(
+    ctx: &mut WorkflowContext<AgentRun>,
+    source_agent: &str,
+    handoff: &Handoff,
+    invocation: &ToolInvocation,
+) -> ToolCallResult {
+    let Some(child_input) = invocation
+        .arguments
+        .get("input")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return ToolCallResult::error("handoff requires a string `input` argument");
+    };
+
+    let registry = ctx.state(|state| state.registry.clone());
+    if registry.get(handoff.target()).is_err() {
+        return ToolCallResult::error(format!(
+            "handoff target agent {:?} is not registered",
+            handoff.target()
+        ));
+    }
+
+    let info = ctx.info();
+    let workflow_id = info.workflow_id().to_owned();
+    let run_id = info.run_id().to_owned();
+    let effective_budget = ctx
+        .state(|state| state.effective_budget.clone())
+        .unwrap_or_default();
+    let (spent, spent_turns) = ctx.state(parent_recorded_spend);
+    let Some(child_budget) = remaining_budget(&effective_budget, &spent, spent_turns, true) else {
+        return ToolCallResult::error("handoff blocked: parent run budget has no remaining turn");
+    };
+    let context = HandoffContext {
+        source_agent: source_agent.to_owned(),
+        target_agent: handoff.target().to_owned(),
+        input: child_input.clone(),
+        parent_workflow_id: workflow_id.clone(),
+        parent_run_id: run_id,
+        parent_turn: invocation.identity.turn,
+        call_id: invocation.identity.call_id.clone(),
+    };
+    let child_id = handoff_workflow_id(
+        &workflow_id,
+        invocation.identity.turn,
+        &invocation.identity.call_id,
+    );
+    let child_config = RunConfig::default().with_budget(child_budget);
+    let started = match ctx
+        .start_child_workflow(
+            AgentRun::run,
+            RunInput {
+                agent: handoff.target().to_owned(),
+                prompt: child_input,
+                config: child_config,
+                handoff: Some(context),
+            },
+            ChildWorkflowOptions::workflow_id(child_id),
+        )
+        .await
+    {
+        Ok(started) => started,
+        Err(error) => {
+            return ToolCallResult::error(format!("handoff child failed to start: {error}"));
+        }
+    };
+    let output = match started.result().await {
+        Ok(output) => output,
+        Err(error) => {
+            return ToolCallResult::error(format!("handoff child failed: {error}"));
+        }
+    };
+    let result = match &output.end {
+        RunEnd::Completed | RunEnd::ConversationEnded => ToolCallResult::text(output.text.clone()),
+        RunEnd::BudgetExceeded { cap } => {
+            ToolCallResult::error(format!("handoff child budget exceeded: {cap:?}"))
+        }
+        RunEnd::GuardrailBlocked { guardrail, reason } => ToolCallResult::error(format!(
+            "handoff child guardrail {guardrail:?} blocked the request: {reason}"
+        )),
+    };
+    ctx.state_mut(|state| state.delegated.push(output));
+    result
+}
+
+fn handoff_workflow_id(parent: &str, turn: u32, call_id: &str) -> String {
+    let safe_call_id: String = call_id
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect();
+    format!("{parent}-handoff-{turn}-{safe_call_id}")
+}
+
+fn parent_recorded_spend(state: &AgentRun) -> (RunUsage, u32) {
+    let mut usage = RunUsage::default();
+    for turn in &state.transcript {
+        usage.absorb_turn(&turn.usage);
+    }
+    let mut turns = state.transcript.len() as u32;
+    for child in &state.delegated {
+        usage.absorb_run(&child.usage);
+        turns = turns.saturating_add(child.turns);
+    }
+    (usage, turns)
+}
+
+fn remaining_budget(
+    budget: &RunBudget,
+    spent: &RunUsage,
+    spent_turns: u32,
+    reserve_parent_turn: bool,
+) -> Option<RunBudget> {
+    let reserved = u32::from(reserve_parent_turn);
+    let max_turns = match budget.max_turns {
+        Some(cap) => {
+            let remaining = cap.saturating_sub(spent_turns.saturating_add(reserved));
+            if remaining == 0 {
+                return None;
+            }
+            Some(remaining)
+        }
+        None => None,
+    };
+    Some(RunBudget {
+        max_turns,
+        max_total_tokens: budget
+            .max_total_tokens
+            .map(|cap| cap.saturating_sub(spent.total_tokens())),
+        max_cost_usd: budget
+            .max_cost_usd
+            .map(|cap| (cap - spent.total_cost_usd).max(0.0)),
+    })
+}
+
+fn pre_turn_budget_cap(budget: &RunBudget, usage: &RunUsage, turns: u32) -> Option<BudgetCap> {
+    if let Some(cap) = budget.max_turns
+        && turns >= cap
+    {
+        return Some(BudgetCap::Turns { spent: turns, cap });
+    }
+    if let Some(cap) = budget.max_total_tokens
+        && usage.total_tokens() >= cap
+    {
+        return Some(BudgetCap::TotalTokens {
+            spent: usage.total_tokens(),
+            cap,
+        });
+    }
+    if let Some(cap) = budget.max_cost_usd
+        && usage.total_cost_usd >= cap
+    {
+        return Some(BudgetCap::CostUsd {
+            spent: usage.total_cost_usd,
+            cap,
+        });
+    }
+    None
+}
+
+fn post_turn_budget_cap(budget: &RunBudget, usage: &RunUsage, turns: u32) -> Option<BudgetCap> {
+    if let Some(cap) = budget.max_turns
+        && turns > cap
+    {
+        return Some(BudgetCap::Turns { spent: turns, cap });
+    }
+    if let Some(cap) = budget.max_total_tokens
+        && usage.total_tokens() > cap
+    {
+        return Some(BudgetCap::TotalTokens {
+            spent: usage.total_tokens(),
+            cap,
+        });
+    }
+    if let Some(cap) = budget.max_cost_usd
+        && usage.total_cost_usd > cap
+    {
+        return Some(BudgetCap::CostUsd {
+            spent: usage.total_cost_usd,
+            cap,
+        });
+    }
+    None
 }
 
 fn turn_activity_options(config: &RunConfig) -> ActivityOptions {
@@ -592,9 +866,14 @@ impl From<TurnOutcome> for TurnActivityOutput {
 /// Heartbeat details recorded while a turn runs: the recovery anchor a
 /// retried attempt reads (and, come O6, the bridge's fencing correlate).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TurnHeartbeat {
     /// Backend session id of the in-flight attempt, once known.
     pub session_id: Option<String>,
+    /// Aggregate usage from failed attempts plus the latest cumulative
+    /// snapshot from this attempt. The next activity attempt receives these
+    /// details from Temporal and carries the spend forward.
+    pub usage: TurnUsage,
 }
 
 /// Provider lookup shared with the worker: implementations keyed by
@@ -703,11 +982,19 @@ impl TurnActivities {
 
         let info = ctx.info();
         let attempt = info.attempt;
+        let prior = if attempt > 1 {
+            ctx.heartbeat_details()
+                .deserialize::<TurnHeartbeat>()
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        } else {
+            TurnHeartbeat::default()
+        };
         let mut session = input.session;
         if attempt > 1
             && matches!(session, SessionDirective::Start)
-            && let Ok(Some(prior)) = ctx.heartbeat_details().deserialize::<TurnHeartbeat>()
-            && let Some(session_id) = prior.session_id
+            && let Some(session_id) = prior.session_id.clone()
         {
             session = SessionDirective::ResumeForked { session_id };
         }
@@ -736,26 +1023,83 @@ impl TurnActivities {
         // Pump provider events into activity heartbeats; the session id
         // rides every heartbeat as the retry-recovery anchor.
         let (sender, mut receiver) = mpsc::channel::<TurnEvent>(64);
+        let (event_sink, usage_snapshot) = TurnEventSink::tracked(sender);
         let heartbeat_ctx = ctx.clone();
+        let prior_usage = prior.usage.clone();
+        let pump_prior_usage = prior_usage.clone();
+        let pump_usage_snapshot = usage_snapshot.clone();
         let pump = tokio::spawn(async move {
-            let mut state = TurnHeartbeat::default();
+            let mut state = prior;
             while let Some(event) = receiver.recv().await {
                 if let TurnEvent::SessionStarted { session_id } = &event {
                     state.session_id = Some(session_id.clone());
                 }
+                state.usage = carry_usage_snapshot(
+                    &pump_prior_usage,
+                    &pump_usage_snapshot
+                        .lock()
+                        .expect("turn usage snapshot lock"),
+                );
                 let _ = heartbeat_ctx.record_heartbeat(state.clone()).await;
             }
+            state
         });
 
-        let outcome = provider
-            .execute_turn(request, TurnEventSink::new(sender))
-            .await;
-        pump.abort();
+        let outcome = provider.execute_turn(request, event_sink).await;
+        let mut heartbeat = pump.await.unwrap_or_default();
+        heartbeat.usage = carry_usage_snapshot(
+            &prior_usage,
+            &usage_snapshot.lock().expect("turn usage snapshot lock"),
+        );
+        // Flush the final snapshot before either success or failure returns.
+        // On failure Temporal makes these details available to the retry.
+        let _ = ctx.record_heartbeat(heartbeat.clone()).await;
 
         match outcome {
-            Ok(outcome) => Ok(outcome.into()),
+            Ok(mut outcome) => {
+                outcome.usage = aggregate_success_usage(&prior_usage, &outcome.usage);
+                Ok(outcome.into())
+            }
             Err(error) => Err(turn_failure(&error)),
         }
+    }
+}
+
+fn carry_usage_snapshot(prior: &TurnUsage, current: &TurnUsage) -> TurnUsage {
+    TurnUsage {
+        total_cost_usd: current
+            .total_cost_usd
+            .map(|value| prior.total_cost_usd.unwrap_or(0.0) + value)
+            .or(prior.total_cost_usd),
+        input_tokens: current
+            .input_tokens
+            .map(|value| prior.input_tokens.unwrap_or(0) + value)
+            .or(prior.input_tokens),
+        output_tokens: current
+            .output_tokens
+            .map(|value| prior.output_tokens.unwrap_or(0) + value)
+            .or(prior.output_tokens),
+        duration: current
+            .duration
+            .map(|value| prior.duration.unwrap_or_default() + value)
+            .or(prior.duration),
+    }
+}
+
+fn aggregate_success_usage(prior: &TurnUsage, successful: &TurnUsage) -> TurnUsage {
+    TurnUsage {
+        total_cost_usd: successful
+            .total_cost_usd
+            .map(|value| prior.total_cost_usd.unwrap_or(0.0) + value),
+        input_tokens: successful
+            .input_tokens
+            .map(|value| prior.input_tokens.unwrap_or(0) + value),
+        output_tokens: successful
+            .output_tokens
+            .map(|value| prior.output_tokens.unwrap_or(0) + value),
+        duration: successful
+            .duration
+            .map(|value| prior.duration.unwrap_or_default() + value),
     }
 }
 
@@ -784,20 +1128,163 @@ fn turn_failure(error: &TurnError) -> ActivityError {
 mod tests {
     use super::*;
     use crate::provider::TurnUsage;
+    use proptest::prelude::*;
 
     #[test]
-    fn usage_absorbs_unknowns_as_zero() {
+    fn usage_records_unknowns_instead_of_treating_them_as_zero() {
         let mut usage = RunUsage::default();
-        usage.absorb(&TurnUsage::default());
+        usage.absorb_turn(&TurnUsage::default());
         let reported = TurnUsage {
             total_cost_usd: Some(0.25),
             output_tokens: Some(10),
             ..TurnUsage::default()
         };
-        usage.absorb(&reported);
+        usage.absorb_turn(&reported);
         assert!((usage.total_cost_usd - 0.25).abs() < f64::EPSILON);
-        assert_eq!(usage.output_tokens, 10);
+        assert_eq!(usage.output_tokens, 0);
         assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.turns_with_unknown_tokens, 2);
+        assert_eq!(usage.turns_with_unknown_cost, 1);
+    }
+
+    #[test]
+    fn heartbeat_carryover_aggregates_failed_attempt_spend() {
+        let failed = TurnUsage {
+            total_cost_usd: Some(0.20),
+            input_tokens: Some(100),
+            output_tokens: Some(25),
+            duration: Some(Duration::from_secs(2)),
+        };
+        let retry_snapshot = TurnUsage {
+            total_cost_usd: Some(0.30),
+            input_tokens: Some(150),
+            output_tokens: Some(40),
+            duration: Some(Duration::from_secs(3)),
+        };
+        let carried = carry_usage_snapshot(&failed, &retry_snapshot);
+        assert_eq!(carried.total_cost_usd, Some(0.50));
+        assert_eq!(carried.input_tokens, Some(250));
+        assert_eq!(carried.output_tokens, Some(65));
+        assert_eq!(carried.duration, Some(Duration::from_secs(5)));
+        let aggregate = aggregate_success_usage(&failed, &retry_snapshot);
+        assert_eq!(aggregate.total_cost_usd, carried.total_cost_usd);
+        assert_eq!(aggregate.input_tokens, carried.input_tokens);
+        assert_eq!(aggregate.output_tokens, carried.output_tokens);
+        assert_eq!(aggregate.duration, carried.duration);
+    }
+
+    #[test]
+    fn failure_before_generation_carries_zero_incremental_spend() {
+        let prior = TurnUsage {
+            input_tokens: Some(12),
+            output_tokens: Some(3),
+            ..TurnUsage::default()
+        };
+        let carried = carry_usage_snapshot(&prior, &TurnUsage::default());
+        assert_eq!(carried.input_tokens, prior.input_tokens);
+        assert_eq!(carried.output_tokens, prior.output_tokens);
+        assert_eq!(carried.total_cost_usd, prior.total_cost_usd);
+    }
+
+    #[test]
+    fn new_accounting_fields_default_when_replaying_older_history() {
+        let budget: RunBudget = serde_json::from_value(serde_json::json!({
+            "max_turns": 2,
+            "max_cost_usd": 1.5
+        }))
+        .expect("old budget shape");
+        assert_eq!(budget.max_total_tokens, None);
+
+        let usage: RunUsage = serde_json::from_value(serde_json::json!({
+            "total_cost_usd": 0.5,
+            "input_tokens": 10,
+            "output_tokens": 5
+        }))
+        .expect("old usage shape");
+        assert_eq!(usage.turns_with_unknown_tokens, 0);
+        assert_eq!(usage.turns_with_unknown_cost, 0);
+
+        let heartbeat: TurnHeartbeat = serde_json::from_value(serde_json::json!({
+            "session_id": "session-old"
+        }))
+        .expect("old heartbeat shape");
+        assert_eq!(heartbeat.session_id.as_deref(), Some("session-old"));
+        assert!(heartbeat.usage.input_tokens.is_none());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// Recorded workflow history is the sole budget input. Each generated
+        /// item is one turn's aggregate (including retry carryover).
+        #[test]
+        fn budget_termination_is_exact_and_overshoot_is_one_aggregate_turn(
+            turns in prop::collection::vec((0_u16..500, 0_u16..500, 0_u16..100), 0..40),
+            max_turns in prop::option::of(0_u8..30),
+            max_tokens in prop::option::of(0_u16..10_000),
+            max_cost in prop::option::of(0_u16..2_000),
+        ) {
+            let budget = RunBudget {
+                max_turns: max_turns.map(u32::from),
+                max_total_tokens: max_tokens.map(u64::from),
+                max_cost_usd: max_cost.map(f64::from),
+            };
+            let expected_termination = budget.max_turns.is_some_and(|cap| turns.len() as u32 > cap)
+                || budget.max_total_tokens.is_some_and(|cap| {
+                    let mut spent = 0_u64;
+                    turns.iter().enumerate().any(|(index, (input, output, _))| {
+                        spent += u64::from(*input) + u64::from(*output);
+                        spent > cap || (index + 1 < turns.len() && spent >= cap)
+                    })
+                })
+                || budget.max_cost_usd.is_some_and(|cap| {
+                    let mut spent = 0_f64;
+                    turns.iter().enumerate().any(|(index, (_, _, cost))| {
+                        spent += f64::from(*cost);
+                        spent > cap || (index + 1 < turns.len() && spent >= cap)
+                    })
+                });
+
+            let mut usage = RunUsage::default();
+            let mut completed = 0_u32;
+            let mut last_tokens = 0_u64;
+            let mut last_cost = 0_f64;
+            let mut termination = None;
+            for (input, output, cost) in &turns {
+                if let Some(cap) = pre_turn_budget_cap(&budget, &usage, completed) {
+                    termination = Some(cap);
+                    break;
+                }
+                last_tokens = u64::from(*input) + u64::from(*output);
+                last_cost = f64::from(*cost);
+                usage.absorb_turn(&TurnUsage {
+                    total_cost_usd: Some(last_cost),
+                    input_tokens: Some(u64::from(*input)),
+                    output_tokens: Some(u64::from(*output)),
+                    duration: None,
+                });
+                completed += 1;
+                if let Some(cap) = post_turn_budget_cap(&budget, &usage, completed) {
+                    termination = Some(cap);
+                    break;
+                }
+            }
+
+            prop_assert_eq!(termination.is_some(), expected_termination);
+            if let Some(cap) = termination {
+                match cap {
+                    BudgetCap::Turns { spent, cap } => {
+                        prop_assert!(spent <= cap.saturating_add(1));
+                    }
+                    BudgetCap::TotalTokens { spent, cap } => {
+                        prop_assert!(spent <= cap.saturating_add(last_tokens));
+                    }
+                    BudgetCap::CostUsd { spent, cap } => {
+                        prop_assert!(spent <= cap + last_cost);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

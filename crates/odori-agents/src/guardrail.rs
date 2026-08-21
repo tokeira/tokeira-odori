@@ -44,14 +44,22 @@ pub enum GuardrailVerdict {
 
 /// Caps enforced by the run loop between turns.
 ///
-/// Unknown usage counts as zero: a backend that reports no cost cannot trip
-/// the cost cap. Both caps ending a run produce
-/// [`crate::run::RunEnd::BudgetExceeded`] with the cap that tripped.
+/// Unknown token or cost usage is recorded explicitly and counts against the
+/// turn cap, never as a reported zero. A token/cost cap is evaluated from the
+/// values the provider did report. If either half of a turn's token total is
+/// unknown, that turn counts only against `max_turns`, not the token cap;
+/// likewise an unknown cost counts only against `max_turns`. Users who require
+/// a hard ceiling across a backend with unknown usage must set `max_turns`.
+/// Provider retries count against these caps: successful turn usage includes
+/// failed-attempt spend recovered through activity heartbeat details.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct RunBudget {
     /// Maximum number of turns the run may execute.
     pub max_turns: Option<u32>,
+    /// Maximum cumulative reported input + output tokens.
+    pub max_total_tokens: Option<u64>,
     /// Maximum cumulative reported cost in USD.
     pub max_cost_usd: Option<f64>,
 }
@@ -68,9 +76,35 @@ impl RunBudget {
         self
     }
 
+    /// Cap cumulative reported input + output tokens.
+    pub fn with_max_total_tokens(mut self, tokens: u64) -> Self {
+        self.max_total_tokens = Some(tokens);
+        self
+    }
+
     /// Cap cumulative reported cost.
     pub fn with_max_cost_usd(mut self, cost: f64) -> Self {
         self.max_cost_usd = Some(cost);
         self
+    }
+
+    pub(crate) fn intersect(&self, other: &Self) -> Self {
+        Self {
+            max_turns: min_option(self.max_turns, other.max_turns),
+            max_total_tokens: min_option(self.max_total_tokens, other.max_total_tokens),
+            max_cost_usd: match (self.max_cost_usd, other.max_cost_usd) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(value), None) | (None, Some(value)) => Some(value),
+                (None, None) => None,
+            },
+        }
+    }
+}
+
+fn min_option<T: Ord>(left: Option<T>, right: Option<T>) -> Option<T> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
     }
 }

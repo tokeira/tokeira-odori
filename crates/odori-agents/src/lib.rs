@@ -11,11 +11,12 @@
 //!   binding, tools, guardrails, output shape.
 //! - [`runner::Runner`] — the client surface: start runs, follow
 //!   conversations, fetch typed outputs.
-//! - [`tool::Tool`] — a typed, framework-owned capability; durable
-//!   execution arrives with the mcp-bridge (`.kiro/specs/mcp-bridge/`),
-//!   declarative delegation to harness tooling until then.
+//! - [`tool::Tool`] — a typed, framework-owned capability executed durably
+//!   through the mcp-bridge.
+//! - [`handoff::Handoff`] — a model-visible delegation to another agent's
+//!   child workflow.
 //! - [`guardrail::Guardrail`] — deterministic input/output validation, plus
-//!   [`guardrail::RunBudget`] turn/cost caps enforced by the run loop.
+//!   [`guardrail::RunBudget`] turn/token/cost caps enforced by the run loop.
 //! - [`output::AgentOutput`] — typed outputs: a run produces a value, not a
 //!   string.
 //! - [`provider::Provider`] — the frozen seam to model backends; the unit
@@ -27,6 +28,7 @@
 
 pub mod agent;
 pub mod guardrail;
+pub mod handoff;
 pub mod invocation;
 pub mod output;
 pub mod provider;
@@ -36,9 +38,12 @@ pub mod tool;
 
 pub use agent::{Agent, AgentRegistry};
 pub use guardrail::{Guardrail, GuardrailVerdict, RunBudget};
+pub use handoff::{Handoff, HandoffContext};
 pub use invocation::{InvocationId, InvocationRegistry, ToolCallResult};
 pub use output::{AgentOutput, Json};
 pub use provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
-pub use run::{AgentRun, Providers, RunConfig, RunEnd, RunOutput, TurnActivities};
+pub use run::{
+    AgentRun, BudgetCap, Providers, RunConfig, RunEnd, RunOutput, RunUsage, TurnActivities,
+};
 pub use runner::{Conversation, Runner, RunnerError, register_odori};
 pub use tool::{Tool, ToolFailure, ToolPolicy};
