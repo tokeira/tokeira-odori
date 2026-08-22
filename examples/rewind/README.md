@@ -6,6 +6,18 @@ fixed point. Its activity retry presents `stable-checkpoint-call` again; the
 workflow registry returns the result already in history, so the handler's
 execution count remains one.
 
+## Run the example
+
+Run the complete deterministic demonstration with:
+
+```console
+cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
+```
+
+This starts the embedded engine, exercises exact retry and worker-replacement
+recovery, then creates the two divergent timelines. Its provider is scripted,
+so the command consumes no subscription quota.
+
 It then runs the stronger worker-replacement canary. Worker A stops after an
 identical checkpoint while the embedded engine stays alive. Before worker B is
 started, the demo uses `DescribeWorkflowExecution` to prove that the failed
@@ -23,10 +35,6 @@ embedded engine, not an operating-system process-kill test.
 The replacement-worker path runs unguarded. Failure to resume the durable
 attempt is an example error; there is no diagnostic fallback branch that lets
 the demo continue without proving recovery.
-
-```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
-```
 
 The second half treats the completed deliberation as an immutable, serialized
 snapshot. Two new durable runs receive byte-equivalent snapshot configuration
@@ -47,6 +55,8 @@ PRESENTATIONS: [(1, "stable-checkpoint-call"), (2, "stable-checkpoint-call"), (1
 TIMELINE A: {"decision":"ship","plan_hash":"plan-v1-bugfix-feature-budget-contract","result":"ship from checkpoint:plan-ready:stable-checkpoint-call:execution-1"}
 TIMELINE B: {"decision":"hold","plan_hash":"plan-v1-bugfix-feature-budget-contract","result":"hold from checkpoint:plan-ready:stable-checkpoint-call:execution-1"}
 ```
+
+## Regression tests
 
 There is no special recovery branch in the worker. Session recovery comes
 from heartbeat details and tool dedupe comes from workflow history. The test
