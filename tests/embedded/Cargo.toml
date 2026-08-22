@@ -5,8 +5,12 @@
 # the harness builds identically from any checkout or worktree.
 [package]
 name = "odori-embedded-harness"
+description = "Workspace-excluded integration harness for Odori's embedded engine examples"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/tokeira/tokeira-odori"
 publish = false
 
 [workspace]

@@ -1,12 +1,18 @@
 [package]
 name = "odori-agents"
 description = "Odori's agent primitives: Agent, Runner, Tool, Handoff, Guardrail, typed outputs, sessions"
+readme = "README.md"
+keywords = ["ai-agents", "agent-framework", "durable-execution", "workflow", "temporal"]
+categories = ["asynchronous", "development-tools"]
+documentation = "https://docs.rs/odori-agents"
+publish = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }

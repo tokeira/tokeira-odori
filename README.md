@@ -4,6 +4,9 @@
 
 # Odori
 
+[![Stopgap gates](https://github.com/tokeira/tokeira-odori/actions/workflows/ci.yml/badge.svg)](https://github.com/tokeira/tokeira-odori/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 A minimal Rust agent framework where every run is durably executed.
 
 Odori has five primitives in the OpenAI Agents SDK's image: `Agent`, `Runner`,
