@@ -10,14 +10,15 @@
 use std::fmt;
 
 use temporalio_client::{
-    Client, WorkflowGetResultOptions, WorkflowSignalOptions, WorkflowStartOptions,
+    Client, WorkflowGetResultOptions, WorkflowQueryOptions, WorkflowSignalOptions,
+    WorkflowStartOptions,
 };
 use temporalio_sdk::WorkerOptionsBuilder;
 use thiserror::Error;
 
 use crate::{
     output::{AgentOutput, OutputParseError},
-    run::{AgentRun, RunConfig, RunEnd, RunInput, RunOutput, TurnActivities},
+    run::{AgentRun, RunConfig, RunEnd, RunInput, RunOutput, TurnActivities, TurnRecord},
 };
 
 /// Register Odori's workflow and activities on a worker under assembly.
@@ -123,6 +124,21 @@ impl Runner {
         Ok(Conversation { handle })
     }
 
+    /// Reattach to an existing interactive run by workflow id.
+    ///
+    /// The returned handle is process-local, but the conversation is not: a
+    /// new process can restore its engine, construct the same task-queue
+    /// runner, and recover the handle from the durable `run_id`. This method
+    /// does not contact the engine until the caller queries, signals, or ends
+    /// the conversation.
+    pub fn resume_conversation(&self, run_id: &str) -> Conversation {
+        Conversation {
+            handle: self.client.get_workflow_handle::<
+                <AgentRun as temporalio_workflow::runtime::entry::WorkflowImplementation>::Run,
+            >(run_id),
+        }
+    }
+
     async fn start_and_await(
         &self,
         agent: &str,
@@ -185,6 +201,20 @@ impl fmt::Debug for Conversation {
 }
 
 impl Conversation {
+    /// Return the completed turns currently recorded in workflow history.
+    ///
+    /// In particular, a caller can wait until an approval request appears
+    /// here before taking an embedded-engine snapshot. Observing provider-side
+    /// output alone would race the workflow task that records the turn.
+    pub async fn transcript(&self) -> Result<Vec<TurnRecord>, RunnerError> {
+        self.handle
+            .query(AgentRun::transcript, (), WorkflowQueryOptions::default())
+            .await
+            .map_err(|error| RunnerError::Client {
+                message: error.to_string(),
+            })
+    }
+
     /// Queue the next user message as a turn.
     pub async fn send(&self, message: &str) -> Result<(), RunnerError> {
         self.handle
