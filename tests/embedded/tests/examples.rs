@@ -43,25 +43,26 @@ async fn rewind_survives_worker_replacement_with_default_cache() -> Result<()> {
     support::verify_rewind(&report)
 }
 
-static APPROVAL_STATE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static APPROVAL_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-struct ApprovalProcessState {
+struct TemporaryStateDirectory {
     path: PathBuf,
 }
 
-impl ApprovalProcessState {
-    fn new() -> Self {
-        let sequence = APPROVAL_STATE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        Self {
-            path: std::env::temp_dir().join(format!(
-                "odori-approval-process-{}-{sequence}",
-                std::process::id()
-            )),
-        }
+impl TemporaryStateDirectory {
+    fn new() -> Result<Self> {
+        let sequence = APPROVAL_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "odori-approval-process-{}-{sequence}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path)
+            .with_context(|| format!("create temporary state directory {}", path.display()))?;
+        Ok(Self { path })
     }
 }
 
-impl Drop for ApprovalProcessState {
+impl Drop for TemporaryStateDirectory {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
@@ -86,7 +87,7 @@ fn approval_stage(stage: &str, state: &Path, plan_hash: Option<&str>) -> Result<
 
 #[test]
 fn approval_resume_crosses_a_process_boundary() -> Result<()> {
-    let state = ApprovalProcessState::new();
+    let state = TemporaryStateDirectory::new()?;
     let prepare = approval_stage("prepare", &state.path, None)?;
     ensure!(
         prepare.status.success(),

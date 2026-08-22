@@ -16,19 +16,21 @@ down the worker, and gracefully shuts down the embedded engine. The latter
 atomically writes `engine.snapshot`; the workflow remains live and waiting for
 input.
 
-Run process one with a new state directory:
+Create one ephemeral state directory owned by the parent shell, then run
+process one. The shell must keep the directory alive across both processes:
 
 ```console
+state_directory="$(mktemp -d "${TMPDIR:-/tmp}/odori-approval-resume.XXXXXX")"
 cargo run --manifest-path tests/embedded/Cargo.toml --example approval-resume -- \
-  prepare /tmp/odori-approval-demo
+  prepare "$state_directory"
 ```
 
 It exits after output like:
 
 ```text
 HUMAN APPROVAL REQUIRED: plan-v1-fix-increment
-REQUEST: /tmp/odori-approval-demo/approval-request.json
-SNAPSHOT WRITTEN: /tmp/odori-approval-demo/engine.snapshot (... bytes)
+REQUEST: .../odori-approval-resume.XXXXXX/approval-request.json
+SNAPSHOT WRITTEN: .../odori-approval-resume.XXXXXX/engine.snapshot (... bytes)
 PROCESS ... EXITING WITH LIVE WORKFLOW approval-resume-run
 ```
 
@@ -37,7 +39,8 @@ human decision explicit in process two:
 
 ```console
 cargo run --manifest-path tests/embedded/Cargo.toml --example approval-resume -- \
-  resume /tmp/odori-approval-demo --approve plan-v1-fix-increment
+  resume "$state_directory" --approve plan-v1-fix-increment
+rm -r "$state_directory"
 ```
 
 The second process starts a new embedded engine from `engine.snapshot`, starts
@@ -55,7 +58,7 @@ exactly once if the restored turn is retried.
 Typical completion output:
 
 ```text
-RESTORED: /tmp/odori-approval-demo/engine.snapshot with one recorded proposal turn
+RESTORED: .../odori-approval-resume.XXXXXX/engine.snapshot with one recorded proposal turn
 HUMAN APPROVAL RECORDED: plan-v1-fix-increment
 APPLIED ONCE: src/lib.rs
 GREEN: cargo test --locked

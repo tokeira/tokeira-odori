@@ -19,11 +19,20 @@ pub(super) const BROKEN_LIB: &str = include_str!("../fixture/src/lib.rs");
 pub(super) const FIXED_LIB: &str = include_str!("../fixture/fixed/lib.rs");
 
 pub(super) fn seed(state_directory: &Path) -> Result<PathBuf> {
-    ensure!(
-        !state_directory.exists(),
-        "state directory {} already exists; choose a new path",
-        state_directory.display()
-    );
+    if state_directory.exists() {
+        ensure!(
+            state_directory.is_dir(),
+            "state path {} is not a directory",
+            state_directory.display()
+        );
+        ensure!(
+            fs::read_dir(state_directory)?.next().is_none(),
+            "state directory {} is not empty; choose a new path",
+            state_directory.display()
+        );
+    } else {
+        fs::create_dir_all(state_directory)?;
+    }
     let workspace = state_directory.join(WORKSPACE);
     fs::create_dir_all(workspace.join("src"))?;
     fs::write(workspace.join("Cargo.toml"), FIXTURE_MANIFEST)?;
