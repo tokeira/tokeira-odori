@@ -3,7 +3,7 @@
 //! reading, the bridge-as-tool-path MCP client, and the in-process session
 //! store.
 //!
-//! ## The tier's shape (operator ruling, 2026-08-22)
+//! ## The tier's shape
 //!
 //! One turn = one activity: `execute_turn` runs the provider's internal
 //! completion-and-tool loop to quiescence, streaming chunks as heartbeats.

@@ -3,13 +3,11 @@
 //! MCP config that points their harness at the in-process server.
 //!
 //! Tokens are **per turn-attempt**, not per run. This is load-bearing for
-//! fencing (spec Requirement 4, Property 4): the attempt stamped on an
+//! fencing: the attempt stamped on an
 //! invocation must be the attempt that *spawned the harness making the
 //! call*, so a zombie harness keeps presenting its stale token and its
 //! calls carry the superseded attempt the registry fences. A per-run token
-//! would stamp zombie calls with the current attempt and dissolve the
-//! fence — which resolves spec open question Q5 in favour of per-attempt
-//! tokens.
+//! would stamp zombie calls with the current attempt and dissolve the fence.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -30,18 +28,15 @@ use crate::broker::{CallBroker, UpdateClient};
 #[non_exhaustive]
 pub struct BridgeConfig {
     /// Keepalive cadence while a call is pending. Must sit strictly below
-    /// `mcp_timeout_pin` (Property 5); [`BridgeConfig::validate`] enforces
-    /// the invariant.
+    /// `mcp_timeout_pin`; [`BridgeConfig::validate`] enforces the invariant.
     pub keepalive: Duration,
-    /// The MCP client timeout the provider pins on the harness at spawn
-    /// (spec Requirement 5.3).
+    /// The MCP client timeout the provider pins on the harness at spawn.
     pub mcp_timeout_pin: Option<Duration>,
-    /// Model-visible MCP server name (spec Q7 draft: `odori`).
+    /// Model-visible MCP server name.
     pub server_name: String,
-    /// Ceiling on one tool result's serialized content (spec Q4,
-    /// operator-decided: cap-and-fail). Enforced at the `execute_tool`
-    /// activity, before anything enters history; oversized results become
-    /// model-visible `isError` results.
+    /// Ceiling on one tool result's serialized content. Enforced at the
+    /// `execute_tool` activity before anything enters history; oversized
+    /// results become model-visible `isError` results.
     pub max_result_bytes: usize,
 }
 

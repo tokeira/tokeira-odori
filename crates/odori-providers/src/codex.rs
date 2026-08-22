@@ -3,8 +3,9 @@
 //! One [`Provider::execute_turn`] call owns one supervised app-server process.
 //! The process starts or resumes one persisted Codex thread, executes one turn,
 //! streams app-server notifications as activity liveness, then exits after the
-//! terminal `turn/completed` notification. The protocol and MCP configuration
-//! are conformance-tested against [`EXPECTED_CODEX_CLI_VERSION`].
+//! terminal `turn/completed` notification. The provider requires
+//! [`EXPECTED_CODEX_CLI_VERSION`] or newer, with that version as the protocol
+//! and MCP conformance baseline.
 //!
 //! Codex's MCP tool timeout is a fixed wall-clock ceiling at this pin: progress
 //! notifications do not extend it. Set [`TurnTooling::mcp_timeout`] above the
@@ -32,7 +33,7 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command},
 };
 
-/// Exact CLI pin used for the live O4 app-server and MCP conformance probes.
+/// Exact CLI pin used for app-server and MCP conformance tests.
 pub const EXPECTED_CODEX_CLI_VERSION: &str = "codex-cli 0.148.0-alpha.15";
 
 const APP_SERVER_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
@@ -96,7 +97,10 @@ impl CodexProvider {
         if !output.status.success() {
             return Err(TurnError::Config {
                 message: format!(
-                    "`{}` --version exited with {:?}; install Codex CLI {EXPECTED_CODEX_CLI_VERSION} and run `codex login`",
+                    "`{}` --version exited with {:?}; the Codex provider requires \
+                     {EXPECTED_CODEX_CLI_VERSION} or newer — install it from \
+                     https://learn.chatgpt.com/docs/codex/cli#getting-started and run \
+                     `codex login`",
                     self.command.display(),
                     output.status.code()
                 ),
@@ -521,7 +525,10 @@ fn command_with_hygiene(command: &Path) -> Command {
 fn command_error(command: &Path, action: &str, error: io::Error) -> TurnError {
     let detail = if error.kind() == io::ErrorKind::NotFound {
         format!(
-            "Codex CLI was not found at `{}`; install Codex CLI {EXPECTED_CODEX_CLI_VERSION}, ensure it is on PATH, then run `codex login`",
+            "Codex CLI was not found at `{}`; the Codex provider requires \
+             {EXPECTED_CODEX_CLI_VERSION} or newer — install it from \
+             https://learn.chatgpt.com/docs/codex/cli#getting-started, ensure it is on \
+             PATH, then run `codex login`",
             command.display()
         )
     } else {
@@ -853,5 +860,6 @@ mod tests {
         assert!(message.contains("was not found"));
         assert!(message.contains("codex login"));
         assert!(message.contains(EXPECTED_CODEX_CLI_VERSION));
+        assert!(message.contains("https://learn.chatgpt.com/docs/codex/cli#getting-started"));
     }
 }

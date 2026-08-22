@@ -26,13 +26,9 @@
 //! redeploying changed workflow code; ship such changes as new agent names
 //! or drain first.
 //!
-//! ## mcp-bridge slots (O6)
-//!
-//! Per `.kiro/specs/mcp-bridge/`, this workflow later gains the
-//! `tool_invoked` update handler and the invocation registry as workflow
-//! state, keyed by the turn/attempt identity the turn activity already
-//! stamps on every [`crate::provider::TurnRequest`]. The state struct and
-//! the turn-record shape keep those additions purely additive.
+//! Framework tool calls enter through the `tool_invoked` workflow update.
+//! Its invocation registry is workflow state, keyed by turn and harness call
+//! identity, so completed results replay and superseded attempts are fenced.
 
 // The temporalio macro family (`#[workflow]`, `#[workflow_methods]`,
 // `#[activities]`) generates per-method marker types without Debug derives,
@@ -294,7 +290,7 @@ pub struct AgentRun {
     /// Agent under execution, set before the first turn; the `tool_invoked`
     /// update resolves tools through it.
     agent_name: Option<String>,
-    /// The mcp-bridge invocation registry (spec Requirements 3 and 4).
+    /// The durable framework-tool invocation registry.
     invocations: InvocationRegistry,
     /// Effective runner/agent caps, retained for handoff child budgeting.
     effective_budget: Option<RunBudget>,
@@ -864,7 +860,7 @@ impl From<TurnOutcome> for TurnActivityOutput {
 }
 
 /// Heartbeat details recorded while a turn runs: the recovery anchor a
-/// retried attempt reads (and, come O6, the bridge's fencing correlate).
+/// retried attempt reads.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TurnHeartbeat {
@@ -1363,8 +1359,8 @@ pub struct ExecuteToolInput {
     pub tool: String,
     /// Arguments, verbatim.
     pub arguments: serde_json::Value,
-    /// The invocation identity (rides into the handler's
-    /// [`ToolContext`] as its idempotency key — spec Requirement 2.4).
+    /// The invocation identity, supplied to the handler in [`ToolContext`]
+    /// as its idempotency key.
     pub identity: InvocationId,
 }
 
@@ -1376,10 +1372,10 @@ pub struct ToolActivities {
     max_result_bytes: usize,
 }
 
-/// Default ceiling on one tool result's serialized content (mcp-bridge
-/// spec Q4, operator-decided 2026-08-20): results ride updates into
-/// history and snapshots of the in-memory engine, so they are bounded here
-/// — at the activity, before anything enters history. Oversized results
+/// Default ceiling on one tool result's serialized content.
+///
+/// Results ride workflow updates into history and embedded-engine snapshots,
+/// so the activity bounds them before they enter history. Oversized results
 /// become model-visible `isError` results the model can adapt to.
 pub const DEFAULT_MAX_RESULT_BYTES: usize = 256 * 1024;
 
@@ -1392,8 +1388,8 @@ impl ToolActivities {
         }
     }
 
-    /// Override the per-result size ceiling (spec Q4; wired from
-    /// `BridgeConfig::max_result_bytes` by the engine bootstrap).
+    /// Override the per-result size ceiling. The engine bootstrap supplies
+    /// this from `BridgeConfig::max_result_bytes`.
     pub fn with_max_result_bytes(mut self, max_result_bytes: usize) -> Self {
         self.max_result_bytes = max_result_bytes;
         self

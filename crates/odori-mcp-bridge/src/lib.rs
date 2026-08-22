@@ -3,8 +3,7 @@
 //! A harness (Claude Code, Codex) mid-turn may call a tool the framework
 //! owns. That tool must execute durably — as a tokeira activity with its
 //! own retry policy — while the harness blocks awaiting the MCP response,
-//! inside a turn that is *itself* an activity. This crate is that bridge,
-//! implementing `.kiro/specs/mcp-bridge/`:
+//! inside a turn that is *itself* an activity. This crate is that bridge:
 //!
 //! - `attach::Bridge` — the in-process streamable-HTTP MCP server on
 //!   loopback, per-attempt bearer tokens, and the `AttachmentSource`
@@ -14,9 +13,9 @@
 //!   completed update's reply can be returned);
 //! - the workflow-side pieces (invocation registry, `tool_invoked` update
 //!   handler, `execute_tool` activity) live in `odori-agents`, which this
-//!   crate depends on — never the reverse (spec Requirement 8.5).
+//!   crate depends on — never the reverse.
 //!
-//! The `preview` feature is the descope boundary (spec Requirement 8):
+//! The `preview` feature gates the complete bridge:
 //! with it off this crate compiles to nothing — no listener, no
 //! attachment, no bridge code on any path — and framework tools delegate
 //! to the harness's own tooling. (Module references above are plain code

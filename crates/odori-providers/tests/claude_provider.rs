@@ -241,7 +241,7 @@ async fn missing_binary_says_how_to_install() {
         panic!("missing binary must be terminal Config: {error:?}");
     };
     assert!(
-        message.contains("npm install -g @anthropic-ai/claude-code")
+        message.contains("https://code.claude.com/docs/en/quickstart")
             && message.contains("claude login"),
         "operator-empathy text missing: {message}"
     );
