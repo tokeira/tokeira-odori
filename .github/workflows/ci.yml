@@ -23,10 +23,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6190aa5fb88a88ee71c12769924bbe63a9ab152e # snapshot 2026-03-27
-        with:
-          toolchain: nightly
-          components: rustfmt
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --profile minimal --component rustfmt --no-self-update
       - run: cargo +nightly fmt --all --check
 
   cargo-deny:
