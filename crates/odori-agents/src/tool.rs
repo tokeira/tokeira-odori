@@ -3,12 +3,10 @@
 //! In v0 (mcp-bridge `preview` off) a `Tool` is *declarative*: the runner
 //! delegates tool intent to the harness's native tooling
 //! ([`crate::provider::TurnTooling::allowed_native_tools`]), and the
-//! handler registered here is not executed. The declaration still matters —
-//! it is the surface the O6 bridge turns durable: with `preview` on, each
-//! invocation becomes a tokeira activity governed by this tool's
-//! [`ToolPolicy`], executed through the registered handler. Registering the
-//! full shape now means flipping the flag changes behaviour, not APIs
-//! (mcp-bridge Requirement 8.4).
+//! handler registered here is not executed. The declaration still matters:
+//! with `preview` on, each invocation becomes a tokeira activity governed
+//! by this tool's [`ToolPolicy`] and executed through the registered handler.
+//! The API is identical on both sides of the feature flag.
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 

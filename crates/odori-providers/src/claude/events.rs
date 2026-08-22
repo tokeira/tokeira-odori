@@ -1,8 +1,7 @@
 //! Typed views of headless Claude Code's stream-json protocol.
 //!
-//! Shaped by observation (the retired claude-driver spike, claude 2.1.220;
-//! findings preserved in `.kiro/specs/mcp-bridge/requirements.md` §
-//! Evidence), not by a published schema: the protocol is vendor-versioned,
+//! Shaped by observed Claude Code 2.1.220 output, not by a published schema:
+//! the protocol is vendor-versioned,
 //! new event kinds appear mid-stream on ordinary runs (`rate_limit_event`,
 //! `system:thinking_tokens`), and every type here therefore keeps an
 //! untagged escape hatch. Unknown events are liveness, never errors.

@@ -108,7 +108,7 @@ impl OdoriRuntimeBuilder {
     }
 
     /// Enable the mcp-bridge for this runtime: framework tools execute as
-    /// durable activities, reachable mid-turn (spec `.kiro/specs/mcp-bridge/`).
+    /// durable activities reachable mid-turn.
     #[cfg(feature = "preview")]
     pub fn bridge(mut self, config: odori_mcp_bridge::BridgeConfig) -> Self {
         self.bridge = Some(config);

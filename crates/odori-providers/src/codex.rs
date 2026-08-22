@@ -32,7 +32,7 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command},
 };
 
-/// Exact CLI pin used for the live O4 app-server and MCP conformance probes.
+/// Exact CLI pin used for app-server and MCP conformance tests.
 pub const EXPECTED_CODEX_CLI_VERSION: &str = "codex-cli 0.148.0-alpha.15";
 
 const APP_SERVER_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);

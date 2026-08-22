@@ -106,7 +106,7 @@ pub struct CallBroker {
 impl CallBroker {
     /// A broker emitting keepalive ticks every `keepalive` while a call is
     /// pending. The cadence must sit strictly below the harness's MCP
-    /// timeout (spec Requirement 5.3 pins that timeout at spawn).
+    /// timeout pinned at spawn.
     pub fn new(client: Arc<dyn UpdateClient>, keepalive: Duration) -> Self {
         Self { client, keepalive }
     }

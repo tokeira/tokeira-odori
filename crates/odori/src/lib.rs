@@ -13,8 +13,9 @@
 //! ([`providers`]), and framework-owned tools invoked mid-turn execute as
 //! durable activities through the MCP bridge ([`mcp_bridge`]).
 //!
-//! This crate will additionally own the curated prelude (`odori::prelude`)
-//! once the primitives land.
+//! The facade re-exports the public primitive, provider, and runtime crates;
+//! advanced APIs remain available through the `agents`, `providers`,
+//! `engine`, and `mcp_bridge` modules.
 
 pub use odori_agents as agents;
 pub use odori_engine as engine;

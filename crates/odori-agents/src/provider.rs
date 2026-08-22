@@ -2,8 +2,8 @@
 //! **harness turn**.
 //!
 //! This module is the frozen boundary between the runner and every model
-//! backend (freeze: EOD 2026-08-22). The unit of work is deliberately a
-//! *turn*, not a model completion: a subscription provider (headless Claude
+//! backend. The unit of work is deliberately a *turn*, not a model
+//! completion: a subscription provider (headless Claude
 //! Code, Codex app-server) spawns or resumes its harness, lets the harness
 //! run its own inner tool loop, streams liveness out, and returns the
 //! terminal result. An API-backed provider (secondary tier, behind
@@ -16,11 +16,10 @@
 //! the dependency graph acyclic (`odori-providers` → `odori-agents`) and
 //! keeps this crate free of subprocess machinery.
 //!
-//! Everything a provider needs at spawn time rides [`TurnRequest`], per the
-//! mcp-bridge spec's attachment contract (`.kiro/specs/mcp-bridge/`):
-//! MCP server injection ([`McpServerConfig`]), MCP timeout pinning
+//! Everything a provider needs at spawn time rides [`TurnRequest`]: MCP server
+//! injection ([`McpServerConfig`]), MCP timeout pinning
 //! ([`TurnTooling::mcp_timeout`]), and the exit-classification taxonomy
-//! ([`TurnError`], from the claude-driver spike's 4-tuple).
+//! ([`TurnError`]).
 
 use std::{
     fmt,
@@ -244,10 +243,9 @@ pub enum McpTransport {
     },
 }
 
-/// A source of per-turn MCP attachments — the seam the mcp-bridge
-/// implements without `odori-agents` depending on it (spec Requirement
-/// 8.5). With `preview` off no source exists and turns carry only their
-/// agent-declared tooling.
+/// A source of per-turn MCP attachments — the seam the mcp-bridge implements
+/// without `odori-agents` depending on it. With `preview` off no source
+/// exists and turns carry only their agent-declared tooling.
 pub trait AttachmentSource: std::fmt::Debug + Send + Sync + 'static {
     /// The attachment for one turn, or `None` when the bridge declines
     /// (e.g. the agent has no framework tools). `workflow_id` addresses the
@@ -267,7 +265,7 @@ pub trait AttachmentSource: std::fmt::Debug + Send + Sync + 'static {
 pub struct TurnAttachment {
     /// The bridge's MCP server config (endpoint + bearer token).
     pub mcp_server: McpServerConfig,
-    /// Harness MCP-timeout pin (spec Requirement 5.3).
+    /// Harness MCP-timeout pin.
     pub mcp_timeout: Option<Duration>,
     /// Fully qualified tool names (`mcp__{server}__{tool}`) to allow.
     pub allowed_tools: Vec<String>,
@@ -449,7 +447,7 @@ pub enum TurnError {
         stderr_head: String,
     },
     /// The backend process died with bridge tool calls still awaiting
-    /// their MCP responses (mcp-bridge spec Requirement 6.5 / task 10.3):
+    /// their MCP responses:
     /// the provider observed `tool_use` events for bridge tools that no
     /// `tool_result` answered before death. Retryable — the in-flight
     /// executions run to completion and record, and the resumed session's

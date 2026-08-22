@@ -1,16 +1,14 @@
 //! Pure flag rendering for the headless Claude Code harness: the
-//! spawn-time attachment half of the O3 provider, implemented against the
-//! frozen `TurnTooling` contract so the driver (lane A) consumes it
-//! directly. No process is spawned here.
+//! spawn-time attachment for the Claude provider, implemented against
+//! the frozen `TurnTooling` contract. No process is spawned here.
 
 use odori_agents::provider::{McpTransport, TurnTooling};
 use serde_json::{Map, Value, json};
 
 /// The CLI arguments a turn's tooling adds to a `claude -p` invocation:
 /// `--mcp-config <inline json>`, `--allowedTools <list>`, and the MCP
-/// timeout pin via environment (spec Requirement 5.3; claude 2.1.220 pins
-/// MCP timeouts through its environment, per the claude-driver spike's
-/// flag-surface notes).
+/// timeout pin via environment. Claude 2.1.220 pins MCP timeouts through
+/// `MCP_TIMEOUT` and `MCP_TOOL_TIMEOUT`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ClaudeToolingArgs {
     /// Arguments appended verbatim to the CLI invocation.

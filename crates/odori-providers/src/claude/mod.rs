@@ -1,9 +1,8 @@
 //! The Claude subscription provider: headless Claude Code as a supervised
 //! subprocess, one `claude -p` invocation per harness turn.
 //!
-//! Supervision model (ground truth: the retired claude-driver spike,
-//! preserved in `.kiro/specs/mcp-bridge/requirements.md` § Evidence):
-//! spawn with a scrubbed environment, parse the stream-json JSONL from
+//! Supervision model: spawn with a scrubbed environment, parse the stream-json
+//! JSONL from
 //! stdout with unknown-event tolerance, emit liveness into the turn's
 //! event sink (the runner records these as activity heartbeats), capture
 //! the terminal `result` event, **drain to EOF** (the result is not always
@@ -20,8 +19,7 @@
 //! The harness is a **pinned dependency**: [`PINNED_VERSION`] is what this
 //! provider is conformance-tested against. Version drift warns loudly but
 //! does not fail (protocol tolerance is built in); a missing binary fails
-//! with install guidance, because "the harness is not installed" is a
-//! launch-risk error whose text is the mitigation.
+//! with install guidance.
 
 pub mod events;
 
