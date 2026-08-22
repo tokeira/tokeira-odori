@@ -1,7 +1,7 @@
 //! Flagship examples against the real embedded engine. The scripted paths
 //! are unguarded; the real subscription smoke consumes quota and is ignored.
 
-#[path = "../../../examples/approval-resume/support.rs"]
+#[path = "../../../examples/approval-resume/scenario/mod.rs"]
 mod approval_resume;
 #[path = "../../../examples/support/mod.rs"]
 mod support;

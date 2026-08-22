@@ -77,3 +77,18 @@ cargo test --manifest-path tests/embedded/Cargo.toml --test examples \
 The scripted provider consumes no subscription quota. Its shape deliberately
 matches the live provider contract; a real-provider variant can be added
 behind the existing quota gate without weakening this deterministic path.
+
+## Code structure
+
+The exemplar keeps its architecture visible instead of collecting it in one
+generic support file:
+
+- `main.rs` is only the two-command CLI boundary.
+- `scenario/mod.rs` owns the prepare and resume lifecycle.
+- `scenario/model.rs` owns the typed proposal, decision, and completion values.
+- `scenario/provider.rs` mirrors the harness event and MCP tool-call behavior.
+- `scenario/tools.rs` enforces the approval, scope, exact-byte, and finish-bar
+  policies.
+- `scenario/runtime.rs` owns engine snapshot configuration, worker assembly,
+  and durable transcript observation.
+- `scenario/workspace.rs` owns the fixture and its persistent filesystem evidence.
