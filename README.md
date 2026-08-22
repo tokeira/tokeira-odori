@@ -39,9 +39,10 @@ async fn main() -> Result<()> {
 ```
 
 See [`examples/hello-durable`](examples/hello-durable),
-[`examples/slice-fleet`](examples/slice-fleet), and
-[`examples/rewind`](examples/rewind) for runnable programs and captured
-output. The examples are Cargo targets of the workspace-excluded embedded
+[`examples/slice-fleet`](examples/slice-fleet),
+[`examples/rewind`](examples/rewind), and
+[`examples/approval-resume`](examples/approval-resume) for runnable programs
+and captured output. The examples are Cargo targets of the workspace-excluded embedded
 integration package, preserving the product workspace's dependency boundary.
 
 | Crate | Owns |

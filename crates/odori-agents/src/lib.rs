@@ -44,6 +44,7 @@ pub use output::{AgentOutput, Json};
 pub use provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
 pub use run::{
     AgentRun, BudgetCap, Providers, RunConfig, RunEnd, RunOutput, RunUsage, TurnActivities,
+    TurnRecord,
 };
 pub use runner::{Conversation, Runner, RunnerError, register_odori};
 pub use tool::{Tool, ToolFailure, ToolPolicy};

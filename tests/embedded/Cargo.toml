@@ -24,6 +24,10 @@ path = "../../examples/slice-fleet/main.rs"
 name = "rewind"
 path = "../../examples/rewind/main.rs"
 
+[[example]]
+name = "approval-resume"
+path = "../../examples/approval-resume/main.rs"
+
 [dependencies]
 odori = { path = "../../crates/odori" }
 odori-agents = { path = "../../crates/odori-agents" }
