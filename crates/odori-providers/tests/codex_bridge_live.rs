@@ -1,5 +1,4 @@
 //! Quota-gated live proof: Codex app-server → HTTP bridge → workflow update.
-#![cfg(feature = "preview")]
 
 use std::{sync::Arc, time::Duration};
 

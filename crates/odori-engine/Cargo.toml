@@ -1,12 +1,18 @@
 [package]
 name = "odori-engine"
 description = "Odori's durable-execution substrate: embedded tokeira wired to the Temporal Rust SDK worker"
+readme = "README.md"
+keywords = ["durable-execution", "workflow", "temporal", "ai-agents", "embedded"]
+categories = ["asynchronous", "development-tools"]
+documentation = "https://docs.rs/odori-engine"
+publish = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }

@@ -1,12 +1,18 @@
 [package]
 name = "odori-mcp-bridge"
 description = "Odori's MCP bridge: framework-owned tools executed as durable activities mid-turn"
+readme = "README.md"
+keywords = ["mcp", "durable-execution", "ai-agents", "tools", "workflow"]
+categories = ["asynchronous", "development-tools"]
+documentation = "https://docs.rs/odori-mcp-bridge"
+publish = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
@@ -28,7 +34,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-odori-providers = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 

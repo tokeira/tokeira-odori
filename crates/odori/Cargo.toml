@@ -1,12 +1,18 @@
 [package]
 name = "odori"
 description = "Minimal Rust agent framework with durable execution via embedded tokeira"
+readme = "README.md"
+keywords = ["ai-agents", "durable-execution", "agent-framework", "workflow", "rust"]
+categories = ["asynchronous", "development-tools"]
+documentation = "https://docs.rs/odori"
+publish = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 odori-agents = { workspace = true }
