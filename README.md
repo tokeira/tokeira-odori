@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/odori.png" alt="Odori Bird" width="320">
+</p>
+
 # Odori
 
 A minimal Rust agent framework where every run is durably executed.
