@@ -62,3 +62,14 @@ unguarded. Run the focused test with:
 ```console
 cargo test --manifest-path tests/embedded/Cargo.toml --test examples rewind_survives_worker_replacement_with_default_cache --locked -- --exact
 ```
+
+## Code structure
+
+The example owns its complete implementation under `rewind/scenario/`:
+
+- `mod.rs` owns the retry, worker-replacement, and divergence lifecycle.
+- `model.rs` owns the deliberation snapshot and timeline inputs.
+- `provider.rs` scripts failure, retry, and timeline behavior.
+- `bridge.rs` re-presents stable MCP tool-call identities.
+- `runtime.rs` assembles the embedded engine, agents, and checkpoint tool.
+- `observation.rs` reads durable activity attempts; `state.rs` records evidence.

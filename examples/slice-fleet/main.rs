@@ -1,12 +1,12 @@
-#[path = "../support/mod.rs"]
-mod support;
+#[path = "scenario/mod.rs"]
+mod scenario;
 
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let report = support::run_scripted_fleet(true).await?;
-    support::verify_fleet(&report)?;
+    let report = scenario::run_scripted_fleet(true).await?;
+    scenario::verify_fleet(&report)?;
     println!(
         "GREEN: applied={:?}, turns={}, tokens={}",
         report.applied,

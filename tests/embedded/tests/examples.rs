@@ -3,8 +3,10 @@
 
 #[path = "../../../examples/approval-resume/scenario/mod.rs"]
 mod approval_resume;
-#[path = "../../../examples/support/mod.rs"]
-mod support;
+#[path = "../../../examples/rewind/scenario/mod.rs"]
+mod rewind;
+#[path = "../../../examples/slice-fleet/scenario/mod.rs"]
+mod slice_fleet;
 
 use std::{
     net::TcpListener,
@@ -25,22 +27,22 @@ use tokeira_engine::{Engine, TokeiraConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn slice_fleet_enforces_the_full_scripted_path() -> Result<()> {
-    let report = support::run_scripted_fleet(false).await?;
-    support::verify_fleet(&report)
+    let report = slice_fleet::run_scripted_fleet(false).await?;
+    slice_fleet::verify_fleet(&report)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rewind_resumes_exactly_and_diverges_timelines() -> Result<()> {
-    let report = support::run_rewind(false).await?;
-    support::verify_rewind(&report)
+    let report = rewind::run_rewind(false).await?;
+    rewind::verify_rewind(&report)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rewind_survives_worker_replacement_with_default_cache() -> Result<()> {
-    let report = support::run_rewind(false).await?;
+    let report = rewind::run_rewind(false).await?;
     ensure!(report.replacement_retry_attempt >= 2);
     ensure!(report.replacement_completion <= Duration::from_secs(15));
-    support::verify_rewind(&report)
+    rewind::verify_rewind(&report)
 }
 
 static APPROVAL_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
