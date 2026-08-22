@@ -91,3 +91,16 @@ GREEN: applied=["double-feature", "increment-bugfix"], turns=11, tokens=550
 The integration test runs this entire path unguarded. Real provider smoke runs
 live beside it behind the ignored quota marker; they are never part of the
 default bar.
+
+## Code structure
+
+The example owns its complete implementation under `slice-fleet/scenario/`:
+
+- `mod.rs` owns the approval-driven fleet lifecycle and report.
+- `model.rs` owns the typed plan and worker outcomes.
+- `provider.rs` scripts planning, work, hostile review, and approval behavior.
+- `agents.rs` assembles the agent, handoff, and budget graph.
+- `tools.rs` enforces scope, finish-bar, and per-item apply policies.
+- `bridge.rs` is the scripted harness's HTTP MCP client.
+- `runtime.rs` owns embedded-engine startup and event observation.
+- `state.rs` records policy evidence; `workspace.rs` owns fixture copies.

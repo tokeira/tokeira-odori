@@ -6,6 +6,18 @@ fixed point. Its activity retry presents `stable-checkpoint-call` again; the
 workflow registry returns the result already in history, so the handler's
 execution count remains one.
 
+## Run the example
+
+Run the complete deterministic demonstration with:
+
+```console
+cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
+```
+
+This starts the embedded engine, exercises exact retry and worker-replacement
+recovery, then creates the two divergent timelines. Its provider is scripted,
+so the command consumes no subscription quota.
+
 It then runs the stronger worker-replacement canary. Worker A stops after an
 identical checkpoint while the embedded engine stays alive. Before worker B is
 started, the demo uses `DescribeWorkflowExecution` to prove that the failed
@@ -23,10 +35,6 @@ embedded engine, not an operating-system process-kill test.
 The replacement-worker path runs unguarded. Failure to resume the durable
 attempt is an example error; there is no diagnostic fallback branch that lets
 the demo continue without proving recovery.
-
-```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
-```
 
 The second half treats the completed deliberation as an immutable, serialized
 snapshot. Two new durable runs receive byte-equivalent snapshot configuration
@@ -48,6 +56,8 @@ TIMELINE A: {"decision":"ship","plan_hash":"plan-v1-bugfix-feature-budget-contra
 TIMELINE B: {"decision":"hold","plan_hash":"plan-v1-bugfix-feature-budget-contract","result":"hold from checkpoint:plan-ready:stable-checkpoint-call:execution-1"}
 ```
 
+## Regression tests
+
 There is no special recovery branch in the worker. Session recovery comes
 from heartbeat details and tool dedupe comes from workflow history. The test
 at `tests/embedded/tests/examples.rs` makes each recovery boundary observable:
@@ -62,3 +72,14 @@ unguarded. Run the focused test with:
 ```console
 cargo test --manifest-path tests/embedded/Cargo.toml --test examples rewind_survives_worker_replacement_with_default_cache --locked -- --exact
 ```
+
+## Code structure
+
+The example owns its complete implementation under `rewind/scenario/`:
+
+- `mod.rs` owns the retry, worker-replacement, and divergence lifecycle.
+- `model.rs` owns the deliberation snapshot and timeline inputs.
+- `provider.rs` scripts failure, retry, and timeline behavior.
+- `bridge.rs` re-presents stable MCP tool-call identities.
+- `runtime.rs` assembles the embedded engine, agents, and checkpoint tool.
+- `observation.rs` reads durable activity attempts; `state.rs` records evidence.

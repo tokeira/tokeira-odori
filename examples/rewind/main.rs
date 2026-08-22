@@ -1,10 +1,10 @@
-#[path = "../support/mod.rs"]
-mod support;
+#[path = "scenario/mod.rs"]
+mod scenario;
 
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let report = support::run_rewind(true).await?;
-    support::verify_rewind(&report)
+    let report = scenario::run_rewind(true).await?;
+    scenario::verify_rewind(&report)
 }
