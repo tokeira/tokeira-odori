@@ -16,10 +16,10 @@
 //! turn activity chooses the directive — including heartbeat-recovered
 //! resume on retry — and this provider only executes it.
 //!
-//! The harness is a **pinned dependency**: [`PINNED_VERSION`] is what this
-//! provider is conformance-tested against. Version drift warns loudly but
-//! does not fail (protocol tolerance is built in); a missing binary fails
-//! with install guidance.
+//! The harness is a versioned runtime dependency: this provider requires
+//! [`PINNED_VERSION`] or newer, with that version as its conformance
+//! baseline. Version drift warns loudly but does not fail (protocol tolerance
+//! is built in); a missing binary fails with install guidance.
 
 pub mod events;
 
@@ -448,10 +448,10 @@ fn missing_harness(binary: &std::path::Path, error: &std::io::Error) -> TurnErro
     TurnError::Config {
         message: format!(
             "could not run the Claude Code harness `{}`: {error}. Odori's Claude provider \
-             drives the Claude Code CLI as a subprocess — install it with \
-             `npm install -g @anthropic-ai/claude-code` (or see \
-             https://claude.com/claude-code), make sure `claude` is on PATH (or set \
-             ClaudeConfig::binary), and authenticate it once with `claude login`",
+             drives the Claude Code CLI as a subprocess and requires version \
+             {PINNED_VERSION} or newer — install it from \
+             https://code.claude.com/docs/en/quickstart, make sure `claude` is on PATH \
+             (or set ClaudeConfig::binary), and authenticate it once with `claude login`",
             binary.display(),
         ),
     }

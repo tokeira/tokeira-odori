@@ -88,31 +88,35 @@ version drifts from the version tested here.
 
 ### Claude Code
 
-Install the tested pin, authenticate once, and verify it:
+Install Claude Code by following the
+[official quickstart](https://code.claude.com/docs/en/quickstart), then
+authenticate once and verify the installed version:
 
 ```console
-npm install -g @anthropic-ai/claude-code@2.1.220
 claude login
 claude --version
 ```
 
-The expected version is **Claude Code 2.1.220**. On a headless machine,
-`claude setup-token` is the supported alternative authentication flow. Register
-`ClaudeProvider::new()` under provider name `claude`.
+The Claude provider depends on **Claude Code 2.1.220 or newer**; 2.1.220 is
+the conformance baseline. On a headless machine, `claude setup-token` is the
+supported alternative authentication flow. Register `ClaudeProvider::new()`
+under provider name `claude`.
 
 ### Codex
 
-Install the tested pin, authenticate once, and verify it:
+Install the Codex CLI by following the
+[official getting-started guide](https://learn.chatgpt.com/docs/codex/cli#getting-started),
+then authenticate once and verify the installed version:
 
 ```console
-npm install -g @openai/codex@0.148.0-alpha.15
 codex login
 codex login status
 codex --version
 ```
 
-The expected output is **`codex-cli 0.148.0-alpha.15`**. Register
-`CodexProvider::new()` under provider name `codex`.
+The Codex provider depends on **Codex CLI 0.148.0-alpha.15 or newer**; that
+version is the conformance baseline. Register `CodexProvider::new()` under
+provider name `codex`.
 
 Subscription rate limits and quota windows are the tier's weather. Odori
 classifies retryable API and rate-limit failures for activity backoff, but it

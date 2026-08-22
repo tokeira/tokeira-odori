@@ -12,8 +12,8 @@
 //! - **Codex** — `codex app-server` JSON-RPC, one supervised process per
 //!   turn, with persisted threads resumed by id.
 //!
-//! Harness versions are pinned like the Temporal pin: a provider states the
-//! harness versions it is conformance-tested against, and drift is detected
+//! Harness CLIs are versioned runtime dependencies. Each provider states its
+//! minimum version and conformance baseline; newer version drift is detected
 //! and warned about, never a silent behaviour change.
 //!
 //! The secondary tier — raw-API providers (Anthropic Messages, OpenAI

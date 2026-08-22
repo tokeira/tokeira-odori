@@ -14,13 +14,15 @@ additional providers. `Agent::with_provider` selects by
 ## Claude Code subscription
 
 `ClaudeProvider` runs one supervised `claude -p --output-format stream-json`
-process per turn. The conformance-tested pin is **2.1.220**.
+process per turn. It depends on **Claude Code 2.1.220 or newer**; 2.1.220 is
+the conformance baseline.
 
-Install and authenticate the harness in the same user environment that will run
-the Odori worker:
+Install it with the
+[official Claude Code quickstart](https://code.claude.com/docs/en/quickstart),
+then authenticate the harness in the same user environment that will run the
+Odori worker:
 
 ```console
-npm install -g @anthropic-ai/claude-code@2.1.220
 claude login
 claude --version
 ```
@@ -47,13 +49,14 @@ Provider name: `claude`.
 
 `CodexProvider` supervises `codex app-server` over JSON-RPC. It starts,
 resumes, or forks a persisted Codex thread and completes after the
-`turn/completed` notification. The conformance-tested pin is
-**`codex-cli 0.148.0-alpha.15`**.
+`turn/completed` notification. It depends on **Codex CLI
+0.148.0-alpha.15 or newer**; 0.148.0-alpha.15 is the conformance baseline.
 
-Install and authenticate the harness in the worker's environment:
+Install it with the
+[official Codex CLI getting-started guide](https://learn.chatgpt.com/docs/codex/cli#getting-started),
+then authenticate the harness in the worker's environment:
 
 ```console
-npm install -g @openai/codex@0.148.0-alpha.15
 codex login
 codex login status
 codex --version
@@ -152,4 +155,3 @@ Providers map failures to one public taxonomy:
 The turn activity applies its configured retry policy to retryable classes.
 None of these classes turns a quota error or dead harness into an unbounded
 wait.
-
