@@ -1,0 +1,5 @@
+# Gitignored files to copy into every new worktree (gitignore glob syntax).
+# Read natively by Claude Code and the ChatGPT app; mirrors the engine repo.
+.claude/settings.local.json
+# Machine-local Claude Code imports (the operator's private pointers).
+CLAUDE.local.md
