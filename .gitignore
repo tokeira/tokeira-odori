@@ -50,6 +50,10 @@ criterion/
 # Codex silently prefers this file over AGENTS.md — never commit one
 AGENTS.override.md
 
+# Machine-local Claude Code imports (the operator's private pointers); carried
+# into worktrees by .worktreeinclude, never committed.
+CLAUDE.local.md
+
 # Claude Code session-local state
 .claude/settings.local.json
 .claude/worktrees/
