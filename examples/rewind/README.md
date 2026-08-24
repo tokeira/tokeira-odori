@@ -29,8 +29,9 @@ attempt 2, starts a new engine over the same database, and only then starts
 worker B. The initial and restarted cluster/schema reports and measured startup
 times are printed. Managed engine shutdown releases ownership but does not
 delete the cluster; the descriptor is retained for explicit administrative
-teardown. The adopted mode uses the exact `ODORI_DSQL_*` identity supplied by
-the operator and performs no cluster lifecycle mutation.
+[teardown](../../docs/dsql-clusters.md#delete-a-cluster). The adopted mode uses
+the exact `ODORI_DSQL_*` identity supplied by the operator and performs no
+cluster lifecycle mutation.
 
 This starts the embedded engine, exercises exact retry and worker-replacement
 recovery, then creates the two divergent timelines. Its provider is scripted,

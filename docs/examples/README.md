@@ -26,7 +26,9 @@ Each executable accepts `--storage <mode>`:
 `ODORI_DSQL_MIGRATION_POLICY` is `automatic` or `validate-only`. Invalid or
 incomplete DSQL configuration is an error; the examples do not fall back to
 in-memory storage. They print the successful startup report and the measured
-duration of the complete startup call.
+duration of the complete startup call. See
+[Aurora DSQL clusters](../dsql-clusters.md) for creation prerequisites,
+descriptor recovery, IAM requirements, and teardown.
 
 For example:
 
