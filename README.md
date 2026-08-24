@@ -71,48 +71,6 @@ cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
 The fixed run ID, `hello-1`, is the idempotency key for the complete durable
 execution. Starting it again joins the existing run instead of duplicating it.
 
-## Embedded storage
-
-`odori::Engine` accepts the engine's `EmbeddedEngineConfig` directly. Its
-`EmbeddedStorageConfig` selects one of three modes:
-
-- `InMemory` keeps authoritative state in the process. With no snapshot policy
-  it is ephemeral. Set `TokeiraConfig::policy.snapshot` to an explicit
-  `SnapshotPolicyConfig` to restore a snapshot at startup, refresh it on the
-  configured interval, and write it during graceful shutdown.
-- `ManagedDsql` creates or recovers one dedicated Aurora DSQL cluster from a
-  crash-safe descriptor. `ManagedClusterIntent::CreateOrRecover` is explicit
-  authority to create when the descriptor is absent. Engine shutdown releases
-  the embedded owner but does not delete the cluster; deletion remains an
-  explicit administrative operation.
-- `ExistingDsql` adopts the supplied Region, canonical cluster ID and ARN, and
-  endpoint. The caller must choose `Automatic` or `ValidateOnly` migration.
-  This mode does not create or delete a cluster.
-
-Invalid durable configuration returns the engine's
-`EmbeddedEngineStartError` unchanged; Odori never substitutes in-memory
-storage. After success, `Engine::startup_report()` exposes the selected mode,
-canonical cluster observation, schema result, and ownership result.
-`Engine::startup_elapsed()` exposes the wall-clock duration measured across
-the same startup call.
-
-The repository examples accept `--storage in-memory`, `--storage
-managed-dsql`, or `--storage adopt-existing-endpoint`. DSQL values come from
-the documented `ODORI_DSQL_*` environment variables; they are never inferred
-from an endpoint alone. See the [examples index](docs/examples/README.md) and
-the [Aurora DSQL cluster guide](docs/dsql-clusters.md).
-
-The storage regressions live in `tests/embedded/tests/storage_modes.rs`.
-In-memory and snapshot/restart run unguarded. Live managed DSQL requires
-`ODORI_LIVE_MANAGED_DSQL_ACK=CREATE_AND_DELETE`,
-`ODORI_LIVE_DSQL_REGION`, and `ODORI_LIVE_DSQL_DESCRIPTOR_PATH`; it creates or
-recovers one cluster, restarts a live Odori run, then performs confirmed
-teardown and verifies the descriptor tombstone. Live endpoint adoption
-requires `ODORI_LIVE_EXISTING_DSQL_ACK=USE_EXISTING`, the Region, cluster ID,
-ARN, endpoint, and an explicit migration policy. It restarts the run without
-attempting cluster creation or deletion. Both live tests are ignored unless
-selected explicitly.
-
 ## Five primitives
 
 - **`Agent`** names the instructions, provider, model, tools, handoffs,
@@ -175,7 +133,49 @@ an actionable terminal configuration error; Codex quota failures exhaust the
 configured activity attempts rather than hanging. Missing CLIs and missing
 authentication fail immediately with the install or login command to run.
 
-### Raw APIs
+## Embedded storage
+
+`odori::Engine` accepts the engine's `EmbeddedEngineConfig` directly. Its
+`EmbeddedStorageConfig` selects one of three modes:
+
+- `InMemory` keeps authoritative state in the process. With no snapshot policy
+  it is ephemeral. Set `TokeiraConfig::policy.snapshot` to an explicit
+  `SnapshotPolicyConfig` to restore a snapshot at startup, refresh it on the
+  configured interval, and write it during graceful shutdown.
+- `ManagedDsql` creates or recovers one dedicated Aurora DSQL cluster from a
+  crash-safe descriptor. `ManagedClusterIntent::CreateOrRecover` is explicit
+  authority to create when the descriptor is absent. Engine shutdown releases
+  the embedded owner but does not delete the cluster; deletion remains an
+  explicit administrative operation.
+- `ExistingDsql` adopts the supplied Region, canonical cluster ID and ARN, and
+  endpoint. The caller must choose `Automatic` or `ValidateOnly` migration.
+  This mode does not create or delete a cluster.
+
+Invalid durable configuration returns the engine's
+`EmbeddedEngineStartError` unchanged; Odori never substitutes in-memory
+storage. After success, `Engine::startup_report()` exposes the selected mode,
+canonical cluster observation, schema result, and ownership result.
+`Engine::startup_elapsed()` exposes the wall-clock duration measured across
+the same startup call.
+
+The repository examples accept `--storage in-memory`, `--storage
+managed-dsql`, or `--storage adopt-existing-endpoint`. DSQL values come from
+the documented `ODORI_DSQL_*` environment variables; they are never inferred
+from an endpoint alone. See the [examples index](docs/examples/README.md) and
+the [Aurora DSQL cluster guide](docs/dsql-clusters.md).
+
+The storage regressions live in `tests/embedded/tests/storage_modes.rs`.
+In-memory and snapshot/restart run unguarded. Live managed DSQL requires
+`ODORI_LIVE_MANAGED_DSQL_ACK=CREATE_AND_DELETE`,
+`ODORI_LIVE_DSQL_REGION`, and `ODORI_LIVE_DSQL_DESCRIPTOR_PATH`; it creates or
+recovers one cluster, restarts a live Odori run, then performs confirmed
+teardown and verifies the descriptor tombstone. Live endpoint adoption
+requires `ODORI_LIVE_EXISTING_DSQL_ACK=USE_EXISTING`, the Region, cluster ID,
+ARN, endpoint, and an explicit migration policy. It restarts the run without
+attempting cluster creation or deletion. Both live tests are ignored unless
+selected explicitly.
+
+## Raw APIs
 
 The Anthropic Messages and OpenAI Responses providers are a secondary tier,
 off by default. Enable `api-anthropic`, `api-openai`, or both on the `odori`
