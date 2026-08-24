@@ -163,7 +163,8 @@ no-compile-time-dependency rule.
   Complete { result: ToolResult }`. Workflow state; never in bridge memory
   beyond a request's lifetime.
 - **`ToolResult`** — MCP tool-result shape (content blocks + `is_error`),
-  serialized into history via the update completion; size policy is Q4.
+  serialized into history via the update completion; capped at
+  `BridgeConfig::max_result_bytes` (Q4: 256 KiB default, cap-and-fail).
 - **`BridgeConfig`** — keepalive cadence, harness MCP timeout (the pinned
   value it must stay below), server name (`odori`, Q7).
 
@@ -249,7 +250,7 @@ runs unchanged.
 | `execute_tool` retries exhausted | `ToolError::Exhausted` | MCP tool result `isError: true` (model-visible) |
 | Superseded attempt, unrecorded call | `RegistryError::Fenced` | JSON-RPC error, fencing code; turn unaffected |
 | Update transport failure | `BridgeError::Engine` | JSON-RPC `internal_error`; turn activity fails retryable |
-| Result exceeds size policy | open — Q4 | open — Q4 |
+| Result exceeds `max_result_bytes` | `cap_result` replaces the result before recording | MCP tool result `isError: true` (model-visible: size, limit, write-to-a-file guidance); recorded like any result so replay serves it identically; terminal — retrying reproduces the same size |
 
 ## Testing Strategy
 
