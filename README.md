@@ -133,6 +133,22 @@ an actionable terminal configuration error; Codex quota failures exhaust the
 configured activity attempts rather than hanging. Missing CLIs and missing
 authentication fail immediately with the install or login command to run.
 
+### Raw APIs
+
+The Anthropic Messages and OpenAI Responses providers are a secondary tier,
+off by default. Enable `api-anthropic`, `api-openai`, or both on the `odori`
+dependency and set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the worker
+process's environment. Keys are never read from a repository file.
+
+API-tier whole-loop retry re-spends model tokens while already-recorded tool
+results replay from history. Anthropic multi-turn state is
+continuity-within-process. OpenAI continues with `previous_response_id`, so its
+continuity lasts only as long as the vendor retains that response chain. The
+subscription harness tier is the durable multi-turn path.
+
+The [provider guide](docs/providers.md) covers registration, authentication,
+session boundaries, and every public error class.
+
 ## Embedded storage
 
 `odori::Engine` accepts the engine's `EmbeddedEngineConfig` directly. Its
@@ -174,22 +190,6 @@ requires `ODORI_LIVE_EXISTING_DSQL_ACK=USE_EXISTING`, the Region, cluster ID,
 ARN, endpoint, and an explicit migration policy. It restarts the run without
 attempting cluster creation or deletion. Both live tests are ignored unless
 selected explicitly.
-
-## Raw APIs
-
-The Anthropic Messages and OpenAI Responses providers are a secondary tier,
-off by default. Enable `api-anthropic`, `api-openai`, or both on the `odori`
-dependency and set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the worker
-process's environment. Keys are never read from a repository file.
-
-API-tier whole-loop retry re-spends model tokens while already-recorded tool
-results replay from history. Anthropic multi-turn state is
-continuity-within-process. OpenAI continues with `previous_response_id`, so its
-continuity lasts only as long as the vendor retains that response chain. The
-subscription harness tier is the durable multi-turn path.
-
-The [provider guide](docs/providers.md) covers registration, authentication,
-session boundaries, and every public error class.
 
 ## Durability
 
