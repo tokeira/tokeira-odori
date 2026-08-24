@@ -27,4 +27,12 @@ pub use odori_agents::{
     Providers, RunBudget, RunConfig, RunEnd, RunOutput, Runner, RunnerError, Tool, ToolFailure,
     ToolPolicy, TurnRecord,
 };
-pub use odori_engine::{ConnectTarget, OdoriRuntime};
+pub use odori_engine::{
+    ClusterStartupReport, ConnectTarget, DsqlMigrationPolicy, EmbeddedConfigError,
+    EmbeddedDsqlLimits, EmbeddedEngineConfig, EmbeddedEngineShutdownError,
+    EmbeddedEngineStartError, EmbeddedShutdownFailure, EmbeddedStartupPhase, EmbeddedStorageConfig,
+    EmbeddedStorageMode, EmbeddedValidationError, Engine, EngineStartupReport,
+    ExistingEmbeddedDsqlConfig, ManagedClusterIntent, ManagedEmbeddedDsqlConfig, OdoriRuntime,
+    OwnershipStartupReport, SchemaStartupOutcome, SchemaStartupReport, SnapshotPolicyConfig,
+    TokeiraConfig,
+};

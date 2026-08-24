@@ -17,7 +17,7 @@ use std::{
 
 use anyhow::{Result, anyhow, ensure};
 use odori::{Providers, RunEnd, RunOutput};
-use odori_engine::{ConnectTarget, OdoriRuntime};
+use odori_engine::{ConnectTarget, EmbeddedStorageConfig, OdoriRuntime};
 use odori_mcp_bridge::BridgeConfig;
 
 use agents::registry;
@@ -43,7 +43,16 @@ pub struct FleetReport {
 /// Run the complete fleet with a scripted harness over the real embedded
 /// engine and HTTP bridge. Every signal, child workflow, update, and tool
 /// result is real; only model choice is scripted for determinism.
+#[allow(dead_code)] // The integration target uses the default; the CLI selects storage.
 pub async fn run_scripted_fleet(print: bool) -> Result<FleetReport> {
+    run_scripted_fleet_with_storage(print, EmbeddedStorageConfig::InMemory).await
+}
+
+/// Run the fleet against an explicit E1 embedded storage mode.
+pub async fn run_scripted_fleet_with_storage(
+    print: bool,
+    storage: EmbeddedStorageConfig,
+) -> Result<FleetReport> {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let state = Arc::new(FleetState {
         fixture: TempFixture::new()?,
@@ -58,7 +67,14 @@ pub async fn run_scripted_fleet(print: bool) -> Result<FleetReport> {
         name: "codex-scripted",
         state: state.clone(),
     });
-    let (embedded, _grpc_guard, _nexus_guard) = start_engine().await?;
+    let (embedded, _grpc_guard, _nexus_guard) = start_engine(storage).await?;
+    if print {
+        println!(
+            "ENGINE: {:?}; startup={:?}",
+            embedded.startup_report(),
+            embedded.startup_elapsed()
+        );
+    }
     let runtime = OdoriRuntime::builder("example-slice-fleet")
         .connect(ConnectTarget::service_override(embedded.service_override()))
         .agents(registry(state.clone()))

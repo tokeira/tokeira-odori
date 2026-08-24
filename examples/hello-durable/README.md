@@ -4,19 +4,21 @@ One agent, one durable run, one embedded engine. The Codex CLI supplies the
 subscription-authenticated model; tokeira owns the history and Odori runs the
 harness turn as an activity.
 
+The core API path is:
+
 ```rust
 use std::sync::Arc;
 
 use anyhow::Result;
 use odori::{
-    Agent, AgentRegistry, ConnectTarget, OdoriRuntime, Providers, providers::CodexProvider,
+    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, Providers,
+    providers::CodexProvider,
 };
-use tokeira_engine::Engine;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Start the local durable engine that owns this run's history.
-    let engine = Engine::embedded().await?;
+    let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig::default()).await?;
 
     // Register an agent against the authenticated Codex subscription provider.
     let mut agents = AgentRegistry::new();
@@ -48,6 +50,13 @@ Run it with an authenticated Codex CLI (this consumes quota):
 ```console
 cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
 ```
+
+The executable also accepts `--storage in-memory`, `--storage managed-dsql`,
+or `--storage adopt-existing-endpoint`. DSQL modes read the `ODORI_DSQL_*`
+values listed in the [examples index](../../docs/examples/README.md). Managed
+mode creates or recovers the descriptor's cluster and does not delete it at
+engine shutdown; adopting an existing endpoint never performs cluster
+lifecycle mutation.
 
 The fixed run id, `hello-1`, is the whole-run idempotency key. Reissuing it
 joins the durable execution instead of starting duplicate work.

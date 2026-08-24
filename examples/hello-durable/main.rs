@@ -1,15 +1,30 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use odori::{
-    Agent, AgentRegistry, ConnectTarget, OdoriRuntime, Providers, providers::CodexProvider,
+    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, Providers,
+    providers::CodexProvider,
 };
-use tokeira_engine::Engine;
+use odori_embedded_harness::take_storage_flag;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let storage = take_storage_flag(&mut arguments)?;
+    if !arguments.is_empty() {
+        bail!("usage: hello-durable [--storage <mode>]");
+    }
     // Start the local durable engine that owns this run's history.
-    let engine = Engine::embedded().await?;
+    let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig {
+        storage,
+        ..EmbeddedEngineConfig::default()
+    })
+    .await?;
+    println!(
+        "ENGINE: {:?}; startup={:?}",
+        engine.startup_report(),
+        engine.startup_elapsed()
+    );
 
     // Register an agent against the authenticated Codex subscription provider.
     let mut agents = AgentRegistry::new();
@@ -32,5 +47,6 @@ async fn main() -> Result<()> {
 
     // Drain the worker before stopping the engine it is connected to.
     runtime.shutdown().await?;
-    engine.shutdown().await
+    engine.shutdown().await?;
+    Ok(())
 }

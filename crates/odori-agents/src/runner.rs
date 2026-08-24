@@ -13,6 +13,7 @@ use temporalio_client::{
     Client, WorkflowGetResultOptions, WorkflowQueryOptions, WorkflowSignalOptions,
     WorkflowStartOptions,
 };
+use temporalio_common::protos::temporal::api::enums::v1::WorkflowIdConflictPolicy;
 use temporalio_sdk::WorkerOptionsBuilder;
 use thiserror::Error;
 
@@ -115,7 +116,9 @@ impl Runner {
                     config,
                     handoff: None,
                 },
-                WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned()).build(),
+                WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned())
+                    .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
+                    .build(),
             )
             .await
             .map_err(|error| RunnerError::Client {
@@ -156,7 +159,9 @@ impl Runner {
                     config,
                     handoff: None,
                 },
-                WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned()).build(),
+                WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned())
+                    .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
+                    .build(),
             )
             .await
             .map_err(|error| RunnerError::Client {

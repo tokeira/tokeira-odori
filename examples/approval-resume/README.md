@@ -8,6 +8,15 @@ This is deliberately the embedded/dev-tier persistence story. Production
 deployments retain their normal durable storage contract; the example does not
 present a local snapshot file as a replacement for that storage.
 
+The CLI accepts the same `--storage in-memory`, `--storage managed-dsql`, and
+`--storage adopt-existing-endpoint` flag as the other examples. In-memory mode
+writes and restores `engine.snapshot`. DSQL modes persist the waiting workflow
+in the database instead; process two must receive the same descriptor or
+canonical endpoint environment as process one. Managed engine shutdown does
+not delete the cluster, and adopted mode performs no cluster lifecycle
+mutation. The required `ODORI_DSQL_*` values are listed in the
+[examples index](../../docs/examples/README.md).
+
 The fixture is a tiny Rust library with one failing test. The first turn may
 only propose a typed patch: its file scope, exact before/after bytes, finish
 bar, and plan hash are recorded in workflow history. Once that record is

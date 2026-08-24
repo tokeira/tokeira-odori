@@ -20,21 +20,22 @@ world, then rewind and fork. `cargo run` is the whole install.
 
 ## Quickstart
 
-This is the complete [`hello-durable`](examples/hello-durable/main.rs) example:
+This is the core of the [`hello-durable`](examples/hello-durable/main.rs)
+example; the executable adds the storage-mode flag described below:
 
 ```rust
 use std::sync::Arc;
 
 use anyhow::Result;
 use odori::{
-    Agent, AgentRegistry, ConnectTarget, OdoriRuntime, Providers, providers::CodexProvider,
+    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, Providers,
+    providers::CodexProvider,
 };
-use tokeira_engine::Engine;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Start the local durable engine that owns this run's history.
-    let engine = Engine::embedded().await?;
+    let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig::default()).await?;
 
     // Register an agent against the authenticated Codex subscription provider.
     let mut agents = AgentRegistry::new();
@@ -69,6 +70,47 @@ cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
 
 The fixed run ID, `hello-1`, is the idempotency key for the complete durable
 execution. Starting it again joins the existing run instead of duplicating it.
+
+## Embedded storage
+
+`odori::Engine` accepts the engine's `EmbeddedEngineConfig` directly. Its
+`EmbeddedStorageConfig` selects one of three modes:
+
+- `InMemory` keeps authoritative state in the process. With no snapshot policy
+  it is ephemeral. Set `TokeiraConfig::policy.snapshot` to an explicit
+  `SnapshotPolicyConfig` to restore a snapshot at startup, refresh it on the
+  configured interval, and write it during graceful shutdown.
+- `ManagedDsql` creates or recovers one dedicated Aurora DSQL cluster from a
+  crash-safe descriptor. `ManagedClusterIntent::CreateOrRecover` is explicit
+  authority to create when the descriptor is absent. Engine shutdown releases
+  the embedded owner but does not delete the cluster; deletion remains an
+  explicit administrative operation.
+- `ExistingDsql` adopts the supplied Region, canonical cluster ID and ARN, and
+  endpoint. The caller must choose `Automatic` or `ValidateOnly` migration.
+  This mode does not create or delete a cluster.
+
+Invalid durable configuration returns the engine's
+`EmbeddedEngineStartError` unchanged; Odori never substitutes in-memory
+storage. After success, `Engine::startup_report()` exposes the selected mode,
+canonical cluster observation, schema result, and ownership result.
+`Engine::startup_elapsed()` exposes the wall-clock duration measured across
+the same startup call.
+
+The repository examples accept `--storage in-memory`, `--storage
+managed-dsql`, or `--storage adopt-existing-endpoint`. DSQL values come from
+the documented `ODORI_DSQL_*` environment variables; they are never inferred
+from an endpoint alone. See the [examples index](docs/examples/README.md).
+
+The storage regressions live in `tests/embedded/tests/storage_modes.rs`.
+In-memory and snapshot/restart run unguarded. Live managed DSQL requires
+`ODORI_LIVE_MANAGED_DSQL_ACK=CREATE_AND_DELETE`,
+`ODORI_LIVE_DSQL_REGION`, and `ODORI_LIVE_DSQL_DESCRIPTOR_PATH`; it creates or
+recovers one cluster, restarts a live Odori run, then performs confirmed
+teardown and verifies the descriptor tombstone. Live endpoint adoption
+requires `ODORI_LIVE_EXISTING_DSQL_ACK=USE_EXISTING`, the Region, cluster ID,
+ARN, endpoint, and an explicit migration policy. It restarts the run without
+attempting cluster creation or deletion. Both live tests are ignored unless
+selected explicitly.
 
 ## Five primitives
 
@@ -152,8 +194,9 @@ session boundaries, and every public error class.
 
 The embedded engine and worker communicate in process: no TCP, no ports, no
 daemon. Completed turns, session lineage, usage, handoffs, tool admissions, and
-tool results are history. Process failure therefore resumes the workflow from
-recorded state rather than rebuilding an agent loop from logs.
+tool results are history. With DSQL, process failure therefore resumes the
+workflow from recorded state rather than rebuilding an agent loop from logs;
+in-memory mode needs its explicit snapshot policy to cross an engine restart.
 
 - [`rewind`](examples/rewind) kills a scripted harness at a fixed tool call,
   proves registry replay across retry and default-cache worker replacement,
