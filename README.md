@@ -99,7 +99,8 @@ the same startup call.
 The repository examples accept `--storage in-memory`, `--storage
 managed-dsql`, or `--storage adopt-existing-endpoint`. DSQL values come from
 the documented `ODORI_DSQL_*` environment variables; they are never inferred
-from an endpoint alone. See the [examples index](docs/examples/README.md).
+from an endpoint alone. See the [examples index](docs/examples/README.md) and
+the [Aurora DSQL cluster guide](docs/dsql-clusters.md).
 
 The storage regressions live in `tests/embedded/tests/storage_modes.rs`.
 In-memory and snapshot/restart run unguarded. Live managed DSQL requires

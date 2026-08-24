@@ -15,4 +15,8 @@ Most applications should depend on the [`odori`](https://crates.io/crates/odori)
 facade crate. See the [durability guide](https://github.com/tokeira/tokeira-odori#durability)
 for the crash, resume, rewind, and fork model.
 
+The [Aurora DSQL cluster guide](https://github.com/tokeira/tokeira-odori/blob/main/docs/dsql-clusters.md)
+documents managed creation, adoption, descriptor handling, IAM requirements,
+and explicit teardown.
+
 Licensed under Apache-2.0.
