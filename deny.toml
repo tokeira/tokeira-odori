@@ -45,9 +45,9 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 [sources]
-# Only crates.io; anything else fails. The Temporal Rust SDK pins are vanilla
-# crates.io by launch decision — a git or fork pin appearing here is a
-# regression, not a config gap.
+# Crates.io plus the reviewed E1 engine repository. The Tokeira source remains
+# commit-pinned in Cargo.toml; other git or fork sources are denied.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["ssh://git@github.com/tokeira/tokeira.git"]
