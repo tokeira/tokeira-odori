@@ -18,10 +18,10 @@ idempotent.
 This spec is **foundational** (it fixes workflow state shape and the provider
 spawn contract) and was produced **design-first**: `design.md` carries the
 architecture this document formalises. Scope boundary: the bridge and its
-workflow/provider seams. The turn loop itself (slice O2), the providers' turn
-supervision (O3/O4), and the embedded engine assembly (engine-repo slice T2)
-are sibling work this spec consumes. Implementation is slice O6 (day 25); this
-spec freezes first. Ships behind the `preview` feature (descope ladder rung 3).
+workflow/provider seams. The turn loop itself, the providers' turn
+supervision, and the embedded engine assembly are sibling work this spec
+consumes; the spec freezes before its implementation begins. Ships behind
+the `preview` feature.
 
 ## Glossary
 
@@ -68,7 +68,7 @@ with the turn as the durability boundary.
 
 Out of scope: the bridge exposing harness-*native* tools to the framework;
 resources/prompts/sampling MCP surfaces (tools only in v0); cross-run tool
-result sharing; the O2 turn loop and O3/O4 supervision internals.
+result sharing; the turn-loop and provider supervision internals.
 
 Sanctioned exception: **regenerated call ids on harness-death recovery** —
 verified live for Claude Code (spike, crash-mid-tool-call experiment): when
@@ -86,9 +86,9 @@ Q3/Q6 — a decision this evidence sharpens but does not make.
 
 ## Evidence From Current Code
 
-- **Execution model (authoritative):** launch plan "Twelve Days to Public"
-  (scope contract + slice table) — run-loop-as-workflow / turn-as-activity,
-  update/signal shipping in v0, `preview` as descope rung 3.
+- **Execution model (authoritative):** run-loop-as-workflow /
+  turn-as-activity, update/signal shipping in v0, the bridge behind
+  `preview`.
 - **Harness behaviour (observed):** the claude-driver spike, retired from
   the tree (its README survives in git history via PRs #1/#3) —
   claude 2.1.220 ground truth: `--mcp-config`, `--allowedTools`, `--resume`,
@@ -100,9 +100,9 @@ Q3/Q6 — a decision this evidence sharpens but does not make.
   charter), `crates/odori-providers/src/lib.rs` (provider tiers),
   `crates/odori-engine/src/lib.rs` (worker bootstrap). No behaviour exists
   yet; this spec is green-field against those charters.
-- **Dependencies:** O2 primitives (runner workflow this spec's update handler
-  and registry live in; provider trait frozen EOD day 22); O3/O4 providers
-  (spawn-time attachment); engine-repo T2 (`Engine::embedded()`); Temporal
+- **Dependencies:** the run-loop primitives (runner workflow this spec's
+  update handler and registry live in; provider trait frozen first); the
+  providers (spawn-time attachment); the engine's `Engine::embedded()`; Temporal
   Rust SDK 0.7 update support (workspace pin, `temporalio-sdk = "0.7"`).
 - **Harness identity behaviour (observed):** the Claude spike's
   crash-mid-tool-call experiment found that `tools/call` carries the true
@@ -110,7 +110,7 @@ Q3/Q6 — a decision this evidence sharpens but does not make.
   `params._meta["claudecode/toolUseId"]` plus a `progressToken`; the JSON-RPC
   id is a per-connection counter; kill-mid-await → session records a failed
   tool result and resume regenerates under a fresh id (Q2 answered for
-  Claude). The Codex 0.148 PoC and live O6 run found direct streamable HTTP
+  Claude). The Codex 0.148 PoC and live bridge run found direct streamable HTTP
   attachment, complete bearer headers supplied through `env_http_headers`,
   and the true id at `params._meta.callId`. Codex regenerated that id both
   after process-death/resume and when the model retried a timed-out call in
@@ -287,7 +287,7 @@ observable behaviour, so that durability is real and not a demo claim.
 ### Requirement 8: The `preview` boundary
 
 **User Story:** As a launch owner, I want the bridge cleanly severable behind
-`preview`, so that descope ladder rung 3 is a flag flip, not a surgery.
+`preview`, so that dropping it from a release is a flag flip, not a surgery.
 
 #### Acceptance Criteria
 
@@ -318,7 +318,7 @@ Questions and decisions (numbering shared with `design.md`):
   stay as specified — same-id dedupe is still correct whenever ids do
   re-present — but harness-death recovery on Claude flows through Q3/Q6
   instead. Codex likewise regenerated `_meta.callId` after process death and
-  resume. In the O6 live timeout observation, Codex surfaced its fixed
+  resume. In the live timeout observation, Codex surfaced its fixed
   wall-clock timeout to the model; the requested same-turn retry produced a
   second `tools/call` with a fresh `exec-*` id, not an automatic same-id MCP
   replay. Both durable invocations therefore execute, as the documented Q3

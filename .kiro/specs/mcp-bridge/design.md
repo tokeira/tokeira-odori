@@ -8,7 +8,7 @@ workflow. It executes nothing itself. Every mid-turn tool call becomes a
 state — is the only authority on whether a tool activity runs, and the harness
 only ever observes results already recorded in history.
 
-Behaviour sources: the launch plan's execution model (run loop = workflow,
+Behaviour sources: the framework's execution model (run loop = workflow,
 turn = activity, update/signal in v0); harness ground truth from the
 claude-driver spike (claude 2.1.220; retired from the tree — its README
 survives in git history via PRs #1/#3, and its load-bearing findings are
@@ -21,13 +21,13 @@ design-first; the two documents are kept in sync).
 
 ### Owning relationships
 
-- **O2 (primitives)** owns the run-loop workflow and `Tool`; this design adds
+- **The primitives spec** owns the run-loop workflow and `Tool`; this design adds
   the registry and update handler *into* that workflow and consumes the
   frozen provider trait.
-- **O3/O4 (providers)** own harness spawn/supervision; this design adds the
+- **The provider specs** own harness spawn/supervision; this design adds the
   spawn-time attachment contract (MCP config injection, timeout pinning,
   exit-4-tuple classification) they implement.
-- **Engine repo T2** owns `Engine::embedded()`; `odori-engine` consumes it
+- **The engine repo** owns `Engine::embedded()`; `odori-engine` consumes it
   and registers `execute_tool` on the worker.
 
 ### Non-goals
@@ -142,7 +142,7 @@ timeout pinning at spawn (Req 5.3). Codex: direct streamable HTTP through
 dotted `mcp_servers` config on session start/resume/fork; the full bearer
 header is named by `env_http_headers` and resolved from the app-server child
 environment. Exit classification
-extends the O3 4-tuple with "died awaiting MCP" (the bridge knows which
+extends the provider exit 4-tuple with "died awaiting MCP" (the bridge knows which
 invocations were pending at exit).
 
 ### Wiring (`odori-engine`, facade)
