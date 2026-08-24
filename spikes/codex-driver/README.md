@@ -1,6 +1,6 @@
 # Spike: driving Codex app-server from Rust
 
-Phase-1 evidence for the O4 Codex subscription provider. The probe supervises
+Phase-1 evidence for the Codex subscription provider. The probe supervises
 `codex app-server --listen stdio:// --strict-config`, speaks its
 newline-delimited JSON-RPC protocol, starts/resumes/forks persisted threads,
 streams notifications through turn completion, and attaches the included
@@ -217,13 +217,13 @@ never a hang or terminal configuration failure.
 The fallback was exercised against the same HTTP MCP server. It emitted JSONL
 `thread.started` → `turn.started` → `item.started`/`item.completed` (including
 the MCP call) → `turn.completed`, then exited 0. It uses the same MCP config
-keys and emitted the same `_meta.callId`. App-server remains the selected O4
+keys and emitted the same `_meta.callId`. App-server remains the selected
 transport because its session operations, structured terminal errors, and
 notification stream map directly onto the frozen provider trait.
 
 ## Provider consequences
 
-The O4 provider can implement the frozen trait without changing it: one
+The Codex provider can implement the frozen trait without changing it: one
 supervised app-server process per turn; start/resume/fork by recorded thread id;
 all notifications as heartbeats; structured terminal usage; retryable API,
 harness, timeout, and tooling failures; and direct HTTP bridge attachment with

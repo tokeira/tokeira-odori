@@ -1,7 +1,7 @@
 # Implementation Plan
 
-Slice O6, day 25+. Prerequisites: O2 primitives merged (run-loop workflow,
-`Tool`, frozen provider trait); O3 Claude provider merged or co-landing;
+Prerequisites: the run-loop primitives merged (run-loop workflow,
+`Tool`, frozen provider trait); the Claude provider merged or co-landing;
 `proptest` dev-dependency added under the dependency single-writer rule.
 Q1–Q7 (requirements, Iteration Notes) that remain open at implementation
 start are resolved by their draft answers, marked in code with a spec
@@ -96,7 +96,7 @@ reference.
       the quota-gated direct-HTTP bridge run; no stdio re-exec shim is part
       of the current contract.
   - [x] 10.3 Exit-classification extension
-    - "Died awaiting MCP" folded into the O3 4-tuple; retryable turn
+    - "Died awaiting MCP" folded into the provider exit 4-tuple; retryable turn
       failure; fork-vs-resume selection on retry per taxonomy.
     - _Requirements: 6.4, 6.5, 7.1, 7.3_
 
@@ -181,20 +181,20 @@ reference.
 - {6, 10} → 12 → 13
 - {3, 4, 5, 8, 9, 11, 13} → 14 → 15
 - 6 → 16 (post-v0 acceptable; before the service tier's long-lived processes)
-- External: O2 merged before 1; O3 merged before 10; engine-repo T2 available
-  before 12/14; Q1 answered before 10.2 commits to a transport.
+- External: the primitives merged before 1; the Claude provider merged
+  before 10; the engine's embedded assembly available before 12/14; Q1 answered before 10.2 commits to a transport.
 
 ## Ledger notes (implementation, updated 2026-08-21)
 
-Ticked tasks landed in the O6 implementation PR and the O3 provider PR.
-The O6 completion residuals, 10.2 and 16, closed in `64ef6a96160b`; closing
+Ticked tasks landed in the bridge implementation PR and the Claude
+provider PR. The completion residuals, 10.2 and 16, closed in `64ef6a96160b`; closing
 10.2 also completed 14.2's Codex leg and therefore parents 10 and 14.
 
-O3 closures (2026-08-21): 10.3 landed as the additive
+Claude-provider closures (2026-08-21): 10.3 landed as the additive
 `TurnError::HarnessDiedAwaitingTools` variant, detected provider-side from
 `tool_use` events no `tool_result` answered before death. 11 landed as a
 256-case property suite over the provider's pure classification (the tool-
-and bridge-failure legs were already proven in the O6 suites). 14.2's
+and bridge-failure legs were already proven in the bridge suites). 14.2's
 Claude leg landed behind the ignored-by-default marker AND was run live
 (claude 2.1.237, drifted from the 2.1.220 pin — protocol tolerance held;
 drift warning fired as designed): real harness turn through the embedded
