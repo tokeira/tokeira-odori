@@ -13,14 +13,13 @@
 //! `ConnectionOptions::service_override` — an in-memory duplex with no TCP
 //! listener and no port. `service_override` accepts the **SDK's own**
 //! callback-service type, so this crate depends only on SDK types: the
-//! application constructs the engine and hands its service override to
+//! [`Engine`] owns that engine and hands its service override to
 //! [`ConnectTarget::ServiceOverride`]. The same bootstrap drives an
 //! external tokeirad or Temporal server via [`ConnectTarget::Url`], which
 //! is also how the integration harness proves both paths.
 //!
 //! ```rust,ignore
-//! // Application side, with the engine repo's tokeira-engine:
-//! let engine = tokeira_engine::Engine::start().await?;
+//! let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig::default()).await?;
 //! let odori = OdoriRuntime::builder("my-app")
 //!     .connect(ConnectTarget::service_override(engine.service_override()))
 //!     .agents(registry)
@@ -30,7 +29,11 @@
 //! let result: String = odori.runner().run("assistant", "hello", "run-1").await?;
 //! ```
 
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use odori_agents::{
@@ -42,11 +45,71 @@ use temporalio_client::{
 };
 use temporalio_sdk::{Runtime, Worker, WorkerOptions};
 
+pub use tokeira_config::{
+    DsqlMigrationPolicy, EmbeddedConfigError, EmbeddedDsqlLimits, EmbeddedEngineConfig,
+    EmbeddedStorageConfig, EmbeddedValidationError, ExistingEmbeddedDsqlConfig,
+    ManagedClusterIntent, ManagedEmbeddedDsqlConfig, SnapshotPolicyConfig, TokeiraConfig,
+};
+pub use tokeira_engine::{
+    ClusterStartupReport, EmbeddedEngineShutdownError, EmbeddedEngineStartError,
+    EmbeddedShutdownFailure, EmbeddedStartupPhase, EmbeddedStorageMode, EngineStartupReport,
+    OwnershipStartupReport, SchemaStartupOutcome, SchemaStartupReport,
+};
+
+/// Odori's owner for an embedded Tokeira engine.
+///
+/// The wrapper deliberately accepts E1's configuration types and returns E1's
+/// typed startup and shutdown failures unchanged. In particular, a rejected
+/// DSQL configuration cannot turn into an in-memory engine here.
+#[derive(Debug)]
+pub struct Engine {
+    inner: tokeira_engine::Engine,
+    startup_elapsed: Duration,
+}
+
+impl Engine {
+    /// Start an embedded engine in the explicitly selected storage mode.
+    ///
+    /// [`EmbeddedStorageConfig::InMemory`] also honors the snapshot policy in
+    /// [`TokeiraConfig`]. Managed and existing DSQL modes preserve the engine's
+    /// validation, lifecycle, migration, and never-fallback semantics.
+    pub async fn start_with_embedded_config(
+        config: EmbeddedEngineConfig,
+    ) -> Result<Self, EmbeddedEngineStartError> {
+        let started_at = Instant::now();
+        let inner = tokeira_engine::Engine::start_with_embedded_config(config).await?;
+        Ok(Self {
+            inner,
+            startup_elapsed: started_at.elapsed(),
+        })
+    }
+
+    /// The engine's complete redacted cluster, schema, and ownership report.
+    pub fn startup_report(&self) -> &EngineStartupReport {
+        self.inner.startup_report()
+    }
+
+    /// Wall-clock time measured across the complete embedded startup call.
+    pub fn startup_elapsed(&self) -> Duration {
+        self.startup_elapsed
+    }
+
+    /// Adapt this engine to the Temporal SDK's in-process transport.
+    pub fn service_override(&self) -> CallbackBasedGrpcService {
+        self.inner.service_override()
+    }
+
+    /// Gracefully stop the engine, forwarding E1's typed cleanup result.
+    pub async fn shutdown(self) -> Result<(), EmbeddedEngineShutdownError> {
+        self.inner.shutdown().await
+    }
+}
+
 /// Where the worker and client connect.
 #[derive(Clone)]
 pub enum ConnectTarget {
     /// In-process duplex to an embedded engine: the callback service from
-    /// `tokeira_engine::Engine::service_override()` (or any implementation
+    /// [`Engine::service_override`] (or any implementation
     /// of the SDK's callback service).
     ServiceOverride(CallbackBasedGrpcService),
     /// A network endpoint speaking the Temporal contract (tokeirad, or a

@@ -13,6 +13,7 @@ use std::sync::{
 };
 
 use anyhow::{Context as _, Result, anyhow, ensure};
+use odori_engine::{EmbeddedStorageConfig, EmbeddedStorageMode};
 
 use model::{DeliberationSnapshot, RewindEvent, TimelineInput};
 use observation::{pending_activity, wait_for_attempt};
@@ -37,14 +38,32 @@ pub struct RewindReport {
 /// from the invocation registry. Then use the successful deliberation as one
 /// immutable snapshot for two new workflows with deliberately different
 /// decisions.
+#[allow(dead_code)] // The integration target uses the default; the CLI selects storage.
 pub async fn run_rewind(print: bool) -> Result<RewindReport> {
+    run_rewind_with_storage(print, EmbeddedStorageConfig::InMemory).await
+}
+
+/// Run rewind against an explicit E1 storage mode. Durable DSQL modes stop
+/// and replace the engine as well as the worker before the retry completes.
+pub async fn run_rewind_with_storage(
+    print: bool,
+    storage: EmbeddedStorageConfig,
+) -> Result<RewindReport> {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let state = Arc::new(RewindState {
         tool_executions: AtomicU64::new(0),
         presentations: Mutex::new(Vec::new()),
         events: sender,
     });
-    let (embedded, _grpc_guard, _nexus_guard) = start_engine().await?;
+    let restart_engine = !matches!(&storage, EmbeddedStorageConfig::InMemory);
+    let (mut embedded, mut _grpc_guard, mut _nexus_guard) = start_engine(storage.clone()).await?;
+    if print {
+        println!(
+            "ENGINE: {:?}; startup={:?}",
+            embedded.startup_report(),
+            embedded.startup_elapsed()
+        );
+    }
     let runtime = start_runtime(&embedded, state.clone()).await?;
     let config = odori::RunConfig::default()
         .with_turn_timeout(std::time::Duration::from_secs(15))
@@ -85,16 +104,17 @@ pub async fn run_rewind(print: bool) -> Result<RewindReport> {
     }
 
     let restart_runner = runtime.runner();
-    let restart_probe = tokio::spawn(async move {
+    let first_restart_config = config.clone();
+    let mut restart_probe = Some(tokio::spawn(async move {
         restart_runner
             .run_with_config::<String>(
                 "rewind-worker",
                 "restart canary at the plan-ready checkpoint",
                 "rewind-worker-restart-canary",
-                config,
+                first_restart_config,
             )
             .await
-    });
+    }));
     ensure!(matches!(
         next_event(&mut receiver).await?,
         RewindEvent::CheckpointRecorded
@@ -105,7 +125,11 @@ pub async fn run_rewind(print: bool) -> Result<RewindReport> {
     ));
     if print {
         println!("KILL: harness exited 137 after the restart canary checkpoint");
-        println!("STOP: worker A drains and stops; embedded engine stays alive");
+        if restart_engine {
+            println!("STOP: worker A drains, then the DSQL-backed engine stops");
+        } else {
+            println!("STOP: worker A drains and stops; in-memory engine stays alive");
+        }
     }
     let durable_client = runtime.client();
     runtime.shutdown().await?;
@@ -121,10 +145,47 @@ pub async fn run_rewind(print: bool) -> Result<RewindReport> {
             "DURABLE: engine reports activity attempt {durable_attempt_before_replacement} before worker B starts"
         );
     }
+    if restart_engine {
+        let first_waiter = restart_probe.take().expect("restart waiter exists");
+        first_waiter.abort();
+        let _ = first_waiter.await;
+        embedded.shutdown().await?;
+        let restarted = start_engine(storage).await?;
+        embedded = restarted.0;
+        _grpc_guard = restarted.1;
+        _nexus_guard = restarted.2;
+        ensure!(matches!(
+            embedded.startup_report().storage_mode,
+            EmbeddedStorageMode::ManagedDsql | EmbeddedStorageMode::ExistingDsql
+        ));
+        if print {
+            println!(
+                "ENGINE RESTART: {:?}; startup={:?}",
+                embedded.startup_report(),
+                embedded.startup_elapsed()
+            );
+        }
+    }
     let replacement = start_runtime(&embedded, state.clone()).await?;
     if print {
         println!("RESTART: replacement worker uses default workflow cache settings");
     }
+    let restart_probe = match restart_probe {
+        Some(first_waiter) => first_waiter,
+        None => {
+            let replacement_runner = replacement.runner();
+            tokio::spawn(async move {
+                replacement_runner
+                    .run_with_config::<String>(
+                        "rewind-worker",
+                        "restart canary at the plan-ready checkpoint",
+                        "rewind-worker-restart-canary",
+                        config,
+                    )
+                    .await
+            })
+        }
+    };
     let (replacement_retry_attempt, replacement_completion) = match tokio::time::timeout(
         std::time::Duration::from_secs(15),
         receiver.recv(),

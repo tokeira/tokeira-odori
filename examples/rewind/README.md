@@ -14,12 +14,31 @@ Run the complete deterministic demonstration with:
 cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
 ```
 
+Select storage with `--storage in-memory` (the default), `--storage
+managed-dsql`, or `--storage adopt-existing-endpoint`. For example:
+
+```console
+ODORI_DSQL_REGION=us-east-1 \
+ODORI_DSQL_DESCRIPTOR_PATH=/operator-owned/path/rewind-cluster.json \
+cargo run --manifest-path tests/embedded/Cargo.toml --example rewind -- \
+  --storage managed-dsql
+```
+
+In a DSQL mode, the canary stops the first engine after observing durable
+attempt 2, starts a new engine over the same database, and only then starts
+worker B. The initial and restarted cluster/schema reports and measured startup
+times are printed. Managed engine shutdown releases ownership but does not
+delete the cluster; the descriptor is retained for explicit administrative
+teardown. The adopted mode uses the exact `ODORI_DSQL_*` identity supplied by
+the operator and performs no cluster lifecycle mutation.
+
 This starts the embedded engine, exercises exact retry and worker-replacement
 recovery, then creates the two divergent timelines. Its provider is scripted,
 so the command consumes no subscription quota.
 
-It then runs the stronger worker-replacement canary. Worker A stops after an
-identical checkpoint while the embedded engine stays alive. Before worker B is
+It then runs the stronger replacement canary. Worker A stops after an
+identical checkpoint. In memory, the embedded engine stays alive; in either
+DSQL mode it is shut down and replaced. Before worker B is
 started, the demo uses `DescribeWorkflowExecution` to prove that the failed
 activity advanced durably to retry attempt 2; this avoids confusing a shutdown
 race with a matching or sticky-routing defect. Worker B must receive that
@@ -29,8 +48,9 @@ default 10-second sticky schedule-to-start fallback.
 
 The canary keeps the SDK defaults (`max_cached_workflows = 1000` and a
 10-second sticky fallback); it does not hide recovery behavior by setting
-`max_cached_workflows(0)`. This is a graceful worker replacement over the same
-embedded engine, not an operating-system process-kill test.
+`max_cached_workflows(0)`. The in-memory path is graceful worker replacement
+over one engine. The DSQL path is graceful worker and engine replacement; it
+is not an operating-system process-kill test.
 
 The replacement-worker path runs unguarded. Failure to resume the durable
 attempt is an example error; there is no diagnostic fallback branch that lets

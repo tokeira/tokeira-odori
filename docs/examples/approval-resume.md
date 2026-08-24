@@ -21,6 +21,10 @@ normal durable storage contract of a production deployment.
 
 ## Run process one
 
+Both process invocations accept `--storage <mode>`. In-memory uses the state
+directory's snapshot; DSQL modes use the same explicit configuration for both
+processes. See the [examples index](README.md#storage-mode-flag).
+
 Keep one temporary directory alive across both commands:
 
 ```console
@@ -57,4 +61,3 @@ processes and asserts the unchanged pre-approval fixture, non-empty snapshot,
 restored transcript and session lineage, exactly-once apply, exactly-once finish
 bar, persisted code change, and terminal workflow. The full command and module
 map are in the [example README](../../examples/approval-resume/README.md).
-

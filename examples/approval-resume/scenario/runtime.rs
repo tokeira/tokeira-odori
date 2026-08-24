@@ -4,9 +4,11 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result};
 use odori::{Conversation, Providers, TurnRecord};
-use odori_engine::{ConnectTarget, OdoriRuntime};
+use odori_engine::{
+    ConnectTarget, EmbeddedEngineConfig, EmbeddedStorageConfig, Engine, OdoriRuntime,
+    SnapshotPolicyConfig, TokeiraConfig,
+};
 use odori_mcp_bridge::BridgeConfig;
-use tokeira_engine::{Engine, SnapshotPolicyConfig, TokeiraConfig};
 
 use super::{
     provider::ApprovalProvider,
@@ -16,13 +18,24 @@ use super::{
 pub(super) const RUN_ID: &str = "approval-resume-run";
 const TASK_QUEUE: &str = "example-approval-resume";
 
-pub(super) async fn start_engine(snapshot: &Path) -> Result<Engine> {
+pub(super) async fn start_engine(
+    snapshot: &Path,
+    storage: EmbeddedStorageConfig,
+) -> Result<Engine> {
     let mut config = TokeiraConfig::default();
-    config.policy.snapshot = Some(SnapshotPolicyConfig {
-        location: snapshot.to_path_buf(),
-        interval_ms: 3_600_000,
-    });
-    Engine::start_with_config(config).await
+    if matches!(&storage, EmbeddedStorageConfig::InMemory) {
+        config.policy.snapshot = Some(SnapshotPolicyConfig {
+            location: snapshot.to_path_buf(),
+            interval_ms: 3_600_000,
+        });
+    }
+    Engine::start_with_embedded_config(EmbeddedEngineConfig {
+        server: config,
+        storage,
+        ..EmbeddedEngineConfig::default()
+    })
+    .await
+    .map_err(Into::into)
 }
 
 pub(super) async fn start_runtime(
