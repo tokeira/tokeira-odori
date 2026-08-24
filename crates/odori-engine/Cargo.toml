@@ -24,6 +24,8 @@ temporalio-macros = { workspace = true }
 temporalio-sdk = { workspace = true }
 temporalio-sdk-core = { workspace = true }
 tokio = { workspace = true }
+tokeira-config = { workspace = true }
+tokeira-engine = { workspace = true }
 tracing = { workspace = true }
 
 [features]
