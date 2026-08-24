@@ -53,7 +53,8 @@ cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
 
 The executable also accepts `--storage in-memory`, `--storage managed-dsql`,
 or `--storage adopt-existing-endpoint`. DSQL modes read the `ODORI_DSQL_*`
-values listed in the [examples index](../../docs/examples/README.md). Managed
+values listed in the
+[storage-mode table](../../docs/examples/README.md#storage-mode-flag). Managed
 mode creates or recovers the descriptor's cluster and does not delete it at
 engine shutdown; adopting an existing endpoint never performs cluster
 lifecycle mutation.
