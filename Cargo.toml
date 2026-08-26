@@ -44,8 +44,8 @@ temporalio-macros = "0.7"
 temporalio-workflow = "0.7"
 # Odori's embedded-engine wrapper forwards the engine's public configuration,
 # startup report, and typed failures at the E1 revision.
-tokeira-config = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "b9fc3f789a34f3c524b97223417044b1eecca71a", version = "0.1.0" }
-tokeira-engine = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "b9fc3f789a34f3c524b97223417044b1eecca71a", version = "0.1.0" }
+tokeira-config = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "3553009a31df48a942932df404ff5e92fff32dac", version = "0.1.0" }
+tokeira-engine = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "3553009a31df48a942932df404ff5e92fff32dac", version = "0.1.0" }
 
 anyhow = "1.0"
 async-trait = "0.1"
