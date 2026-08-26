@@ -31,9 +31,9 @@ homepage = "https://tokeira.io"
 # The Temporal Rust SDK is the worker SDK; the embedded tokeira engine speaks
 # the same Temporal contract in-process via
 # `ConnectionOptions::service_override` (an in-memory duplex — no TCP
-# listener, no port). Vanilla crates.io pins — no fork, no [patch] — by
-# launch decision (the replay-guard fix, upstream PR #1353, ships in this
-# line).
+# listener, no port). `v0.7.0-fix.1` carries the worker-shutdown permit fix;
+# the patch below keeps Odori and the embedded Tokeira engine on one coherent
+# SDK source so callback-service types cannot split across crate identities.
 temporalio-sdk = "0.7"
 temporalio-sdk-core = "0.7"
 temporalio-client = "0.7"
@@ -85,6 +85,16 @@ odori-agents = { path = "crates/odori-agents", version = "0.1.0" }
 odori-providers = { path = "crates/odori-providers", version = "0.1.0" }
 odori-engine = { path = "crates/odori-engine", version = "0.1.0" }
 odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.0" }
+
+[patch.crates-io]
+temporalio-client = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-common = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-common-wasm = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-macros = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-protos = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-sdk = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-sdk-core = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-workflow = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
 
 # Mechanized AGENTS.md rules: prose rules drift under a fluid codebase;
 # compiler-enforced ones survive refactors. Everything here is binding and

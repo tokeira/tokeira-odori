@@ -876,7 +876,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.23.0",
+ "darling",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -1377,18 +1377,8 @@ version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
 dependencies = [
- "darling_core 0.20.11",
- "darling_macro 0.20.11",
-]
-
-[[package]]
-name = "darling"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
-dependencies = [
- "darling_core 0.23.0",
- "darling_macro 0.23.0",
+ "darling_core",
+ "darling_macro",
 ]
 
 [[package]]
@@ -1406,36 +1396,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "darling_core"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9865a50f7c335f53564bb694ef660825eb8610e0a53d3e11bf1b0d3df31e03b0"
-dependencies = [
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "darling_macro"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
- "darling_core 0.20.11",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.23.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac3984ec7bd6cfa798e62b4a642426a5be0e68f9401cfc2a01e3fa9ea2fcdb8d"
-dependencies = [
- "darling_core 0.23.0",
+ "darling_core",
  "quote",
  "syn 2.0.119",
 ]
@@ -1489,7 +1455,7 @@ version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
 dependencies = [
- "darling 0.20.11",
+ "darling",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -2396,7 +2362,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3702,7 +3668,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -3736,7 +3702,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3884,7 +3850,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.43",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3922,7 +3888,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -5102,8 +5068,7 @@ dependencies = [
 [[package]]
 name = "temporalio-client"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "749e987bf8895c2c1e04d87c2cda31b81191fbfa555555210c81c774b943d4ea"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5136,8 +5101,7 @@ dependencies = [
 [[package]]
 name = "temporalio-common"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5fb31f018bb56a490834e07d3a4cf03cacd076b9a41cbad8d0daa1bfb1abc2d"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5177,8 +5141,7 @@ dependencies = [
 [[package]]
 name = "temporalio-common-wasm"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "554221c08d489f4aee18432b4d5bfbc6e3b78d6738251424ac717e91475d68ea"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5204,8 +5167,7 @@ dependencies = [
 [[package]]
 name = "temporalio-macros"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0204af3cafd33d1aac4bf6d998ba6c6070b1a1dc3e7331f8e3a1127bf0b8386"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5215,8 +5177,7 @@ dependencies = [
 [[package]]
 name = "temporalio-protos"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8188305170ff0998c1c99ec8a62ef305b8d580efd32fe8ac7023bafc5a4191c7"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5238,8 +5199,7 @@ dependencies = [
 [[package]]
 name = "temporalio-sdk"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85efb98b1d7f198aa98b61a591f90bc64c04d537d749cb926bf084053a6afb0d"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5267,8 +5227,7 @@ dependencies = [
 [[package]]
 name = "temporalio-sdk-core"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f4f99b384438aad4656344b27e6ee6cb05e8ee568210a23d86836046eda0c9b"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5314,8 +5273,7 @@ dependencies = [
 [[package]]
 name = "temporalio-workflow"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b3dfd064fd82be4b0ffefdaa1e7a0e7a0b8d1722d96bd59e9791585702b96e6"
+source = "git+https://github.com/tokeira/sdk-rust.git?rev=0602a7d647f2842747b52b17f3533f7c1086795f#0602a7d647f2842747b52b17f3533f7c1086795f"
 dependencies = [
  "anyhow",
  "bon",
@@ -6747,7 +6705,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

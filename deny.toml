@@ -45,9 +45,12 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 [sources]
-# Crates.io plus the reviewed E1 engine repository. The Tokeira source remains
-# commit-pinned in Cargo.toml; other git or fork sources are denied.
+# Crates.io plus the reviewed Tokeira engine and Temporal SDK fix repositories.
+# Both git sources remain commit-pinned in Cargo.toml; other sources are denied.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["ssh://git@github.com/tokeira/tokeira.git"]
+allow-git = [
+    "ssh://git@github.com/tokeira/tokeira.git",
+    "https://github.com/tokeira/sdk-rust.git",
+]
