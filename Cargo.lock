@@ -5447,7 +5447,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tokeira-auth"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -5469,7 +5469,7 @@ dependencies = [
 [[package]]
 name = "tokeira-build-info"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "regex",
  "toml 0.8.23",
@@ -5478,7 +5478,7 @@ dependencies = [
 [[package]]
 name = "tokeira-chasm"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "prost 0.12.6",
  "serde",
@@ -5490,7 +5490,7 @@ dependencies = [
 [[package]]
 name = "tokeira-chasm-activity"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "postcard",
  "prost 0.12.6",
@@ -5505,7 +5505,7 @@ dependencies = [
 [[package]]
 name = "tokeira-chasm-derive"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5515,7 +5515,7 @@ dependencies = [
 [[package]]
 name = "tokeira-compatibility"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "serde",
  "serde_json",
@@ -5527,7 +5527,7 @@ dependencies = [
 [[package]]
 name = "tokeira-config"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "async-trait",
  "clap",
@@ -5543,7 +5543,7 @@ dependencies = [
 [[package]]
 name = "tokeira-edge"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5591,7 +5591,7 @@ dependencies = [
 [[package]]
 name = "tokeira-engine"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5647,7 +5647,7 @@ dependencies = [
 [[package]]
 name = "tokeira-kernel"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "serde",
  "serde_json",
@@ -5661,7 +5661,7 @@ dependencies = [
 [[package]]
 name = "tokeira-managed-dsql"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5678,7 +5678,7 @@ dependencies = [
 [[package]]
 name = "tokeira-observability"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "async-trait",
  "http-body-util",
@@ -5704,7 +5704,7 @@ dependencies = [
 [[package]]
 name = "tokeira-projection"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -5730,7 +5730,7 @@ dependencies = [
 [[package]]
 name = "tokeira-proto"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -5753,7 +5753,7 @@ dependencies = [
 [[package]]
 name = "tokeira-runtime"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5796,7 +5796,7 @@ dependencies = [
 [[package]]
 name = "tokeira-storage"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -5826,7 +5826,7 @@ dependencies = [
 [[package]]
 name = "tokeira-types"
 version = "0.1.0"
-source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=3553009a31df48a942932df404ff5e92fff32dac#3553009a31df48a942932df404ff5e92fff32dac"
+source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
 dependencies = [
  "blake3",
  "serde",

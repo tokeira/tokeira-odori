@@ -49,6 +49,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 temporalio-client = "0.7"
-tokeira-engine = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "3553009a31df48a942932df404ff5e92fff32dac" }
-tokeira-managed-dsql = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "3553009a31df48a942932df404ff5e92fff32dac" }
+tokeira-engine = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "8815c925011a4520282aa1e94478aae97c05c472" }
+tokeira-managed-dsql = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "8815c925011a4520282aa1e94478aae97c05c472" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
