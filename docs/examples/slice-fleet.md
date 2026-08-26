@@ -32,6 +32,9 @@ accounting are real.
 cargo run --manifest-path tests/embedded/Cargo.toml --example slice-fleet
 ```
 
+The optional `-- --storage <mode>` flag selects one of the three modes listed
+in the [examples index](README.md#storage-mode-flag).
+
 The deterministic path consumes no subscription quota.
 
 ## Read the output
@@ -46,4 +49,3 @@ The final `GREEN` line reports the two applied slices, eleven parent-accounted
 turns (six direct and five delegated), and 550 tokens (440 input plus 110
 output). The full captured transcript and module map live in the
 [example README](../../examples/slice-fleet/README.md).
-

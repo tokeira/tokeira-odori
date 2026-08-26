@@ -7,9 +7,10 @@ The first recovery path makes a scripted harness call the durable
 `stable-checkpoint-call` again. The invocation registry returns the result
 already in workflow history, so that tool handler executes once.
 
-The stronger path stops worker A after the same checkpoint while keeping the
-embedded engine alive. Before worker B starts, the example reads durable state
-to prove the activity has reached retry attempt 2. Worker B uses the SDK's
+The stronger path stops worker A after the same checkpoint. In-memory mode
+keeps the engine alive; either DSQL mode stops it and starts a replacement over
+the same database. Before worker B starts, the example reads durable state to
+prove the activity has reached retry attempt 2. Worker B uses the SDK's
 default workflow cache and 10-second sticky schedule-to-start fallback; it must
 receive the attempt and complete within 15 seconds.
 
@@ -23,6 +24,10 @@ deliberation; it is not an engine snapshot file.
 ```console
 cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
 ```
+
+Add `-- --storage managed-dsql` for the managed-cluster engine-restart demo,
+or `-- --storage adopt-existing-endpoint` for an operator-owned cluster. The
+required environment and lifecycle behavior are in the [examples index](README.md#storage-mode-flag).
 
 The scripted provider consumes no subscription quota.
 
@@ -38,4 +43,3 @@ the human decision.
 
 The exact assertions and a focused regression command are in the
 [example README](../../examples/rewind/README.md).
-

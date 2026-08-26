@@ -15,6 +15,7 @@ use std::{fs, path::Path, sync::Arc};
 
 use anyhow::{Result, ensure};
 use odori::RunEnd;
+use odori_engine::EmbeddedStorageConfig;
 
 use model::{ApprovalCompletion, ApprovalDecision, PatchProposal, proposal};
 use runtime::{RUN_ID, start_engine, start_runtime, wait_for_transcript};
@@ -45,6 +46,15 @@ pub struct ResumeReport {
 
 /// Record one typed proposal, persist the live workflow to disk, and exit.
 pub async fn prepare(state_directory: &Path, print: bool) -> Result<PrepareReport> {
+    prepare_with_storage(state_directory, print, EmbeddedStorageConfig::InMemory).await
+}
+
+/// Record one proposal using an explicit E1 storage mode.
+pub async fn prepare_with_storage(
+    state_directory: &Path,
+    print: bool,
+    storage: EmbeddedStorageConfig,
+) -> Result<PrepareReport> {
     let workspace = seed(state_directory)?;
     ensure!(
         !test_succeeds(&workspace)?,
@@ -52,7 +62,15 @@ pub async fn prepare(state_directory: &Path, print: bool) -> Result<PrepareRepor
     );
     let snapshot = state_directory.join(SNAPSHOT_FILE);
     let state = Arc::new(ApprovalState::waiting(workspace));
-    let engine = start_engine(&snapshot).await?;
+    let uses_snapshot = matches!(&storage, EmbeddedStorageConfig::InMemory);
+    let engine = start_engine(&snapshot, storage).await?;
+    if print {
+        println!(
+            "ENGINE: {:?}; startup={:?}",
+            engine.startup_report(),
+            engine.startup_elapsed()
+        );
+    }
     let runtime = start_runtime(&engine, state.clone()).await?;
     let conversation = runtime
         .runner()
@@ -77,8 +95,13 @@ pub async fn prepare(state_directory: &Path, print: bool) -> Result<PrepareRepor
     drop(conversation);
     runtime.shutdown().await?;
     engine.shutdown().await?;
-    let snapshot_bytes = fs::metadata(&snapshot)?.len();
-    ensure!(snapshot_bytes > 0, "engine snapshot is empty");
+    let snapshot_bytes = if uses_snapshot {
+        let bytes = fs::metadata(&snapshot)?.len();
+        ensure!(bytes > 0, "engine snapshot is empty");
+        bytes
+    } else {
+        0
+    };
     ensure!(
         !test_succeeds(state.workspace())?,
         "the workspace changed before approval"
@@ -89,10 +112,14 @@ pub async fn prepare(state_directory: &Path, print: bool) -> Result<PrepareRepor
             "REQUEST: {}",
             state_directory.join(APPROVAL_REQUEST).display()
         );
-        println!(
-            "SNAPSHOT WRITTEN: {} ({snapshot_bytes} bytes)",
-            snapshot.display()
-        );
+        if uses_snapshot {
+            println!(
+                "SNAPSHOT WRITTEN: {} ({snapshot_bytes} bytes)",
+                snapshot.display()
+            );
+        } else {
+            println!("DSQL DURABLE: workflow history committed before engine shutdown");
+        }
         println!(
             "PROCESS {} EXITING WITH LIVE WORKFLOW {RUN_ID}",
             std::process::id()
@@ -110,12 +137,31 @@ pub async fn resume(
     approved_plan_hash: &str,
     print: bool,
 ) -> Result<ResumeReport> {
+    resume_with_storage(
+        state_directory,
+        approved_plan_hash,
+        print,
+        EmbeddedStorageConfig::InMemory,
+    )
+    .await
+}
+
+/// Restore and finish using the same explicit E1 storage mode as prepare.
+pub async fn resume_with_storage(
+    state_directory: &Path,
+    approved_plan_hash: &str,
+    print: bool,
+    storage: EmbeddedStorageConfig,
+) -> Result<ResumeReport> {
     let snapshot = state_directory.join(SNAPSHOT_FILE);
-    ensure!(
-        snapshot.is_file(),
-        "missing snapshot {}",
-        snapshot.display()
-    );
+    let uses_snapshot = matches!(&storage, EmbeddedStorageConfig::InMemory);
+    if uses_snapshot {
+        ensure!(
+            snapshot.is_file(),
+            "missing snapshot {}",
+            snapshot.display()
+        );
+    }
     let proposal: PatchProposal =
         serde_json::from_slice(&fs::read(state_directory.join(APPROVAL_REQUEST))?)?;
     ensure!(
@@ -127,7 +173,14 @@ pub async fn resume(
         state_directory.join(WORKSPACE),
         approved_plan_hash.to_owned(),
     ));
-    let engine = start_engine(&snapshot).await?;
+    let engine = start_engine(&snapshot, storage).await?;
+    if print {
+        println!(
+            "ENGINE: {:?}; startup={:?}",
+            engine.startup_report(),
+            engine.startup_elapsed()
+        );
+    }
     let runtime = start_runtime(&engine, state.clone()).await?;
     let conversation = runtime.runner().resume_conversation(RUN_ID);
     let transcript_before = wait_for_transcript(&conversation, 1).await?;
@@ -170,10 +223,14 @@ pub async fn resume(
     runtime.shutdown().await?;
     engine.shutdown().await?;
     if print {
-        println!(
-            "RESTORED: {} with one recorded proposal turn",
-            snapshot.display()
-        );
+        if uses_snapshot {
+            println!(
+                "RESTORED: {} with one recorded proposal turn",
+                snapshot.display()
+            );
+        } else {
+            println!("RESTORED: DSQL history with one recorded proposal turn");
+        }
         println!("HUMAN APPROVAL RECORDED: {approved_plan_hash}");
         println!("APPLIED ONCE: {ALLOWED_PATH}");
         println!("GREEN: cargo test --locked");

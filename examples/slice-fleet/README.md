@@ -17,6 +17,13 @@ Run the deterministic path:
 cargo run --manifest-path tests/embedded/Cargo.toml --example slice-fleet
 ```
 
+The same path accepts `--storage in-memory`, `--storage managed-dsql`, or
+`--storage adopt-existing-endpoint`. The two DSQL modes read the explicit
+`ODORI_DSQL_*` values listed in the [examples index](../../docs/examples/README.md);
+the example prints the cluster/schema startup report and measured startup time.
+Managed shutdown does not implicitly delete the cluster, while adopted mode
+does not create or delete it.
+
 The policies are code:
 
 - The orchestrator's first durable run is decoded as `Json<SlicePlan>` before
