@@ -71,6 +71,32 @@ cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
 The fixed run ID, `hello-1`, is the idempotency key for the complete durable
 execution. Starting it again joins the existing run instead of duplicating it.
 
+## Use Odori in your own project
+
+```console
+cargo add odori
+```
+
+Then add these lines to your project's root `Cargo.toml`:
+
+```toml
+[patch.crates-io]
+temporalio-client = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-common = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-common-wasm = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-macros = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-protos = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-sdk = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-sdk-core = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+temporalio-workflow = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
+```
+
+The pinned revision is Temporal Rust SDK v0.7.0 plus one worker-shutdown fix
+that is merged upstream but not yet in any released SDK version. Cargo applies
+`[patch.crates-io]` only from the root manifest of a build, so the lines have
+to live in your project rather than travel with the published crates. This
+section disappears once the next upstream SDK release lands.
+
 ## Five primitives
 
 - **`Agent`** names the instructions, provider, model, tools, handoffs,

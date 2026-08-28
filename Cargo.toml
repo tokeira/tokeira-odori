@@ -19,7 +19,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
@@ -43,9 +43,10 @@ temporalio-macros = "0.7"
 # `#[workflow_methods]` needs it as a direct dependency.
 temporalio-workflow = "0.7"
 # Odori's embedded-engine wrapper forwards the engine's public configuration,
-# startup report, and typed failures at the E1 revision.
-tokeira-config = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "8815c925011a4520282aa1e94478aae97c05c472", version = "0.1.0" }
-tokeira-engine = { git = "ssh://git@github.com/tokeira/tokeira.git", rev = "8815c925011a4520282aa1e94478aae97c05c472", version = "0.1.0" }
+# startup report, and typed failures. Plain registry dependencies: the engine
+# publishes to crates.io on its own release train.
+tokeira-config = "0.1.1"
+tokeira-engine = "0.1.1"
 
 anyhow = "1.0"
 async-trait = "0.1"
@@ -80,11 +81,11 @@ uuid = { version = "1.10", features = ["serde", "v4"] }
 
 # Internal crates carry an explicit version so intra-workspace requirements
 # stay publishable (and cargo-deny's wildcard ban stays meaningful).
-odori = { path = "crates/odori", version = "0.1.0" }
-odori-agents = { path = "crates/odori-agents", version = "0.1.0" }
-odori-providers = { path = "crates/odori-providers", version = "0.1.0" }
-odori-engine = { path = "crates/odori-engine", version = "0.1.0" }
-odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.0" }
+odori = { path = "crates/odori", version = "0.1.1" }
+odori-agents = { path = "crates/odori-agents", version = "0.1.1" }
+odori-providers = { path = "crates/odori-providers", version = "0.1.1" }
+odori-engine = { path = "crates/odori-engine", version = "0.1.1" }
+odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.1" }
 
 [patch.crates-io]
 temporalio-client = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
