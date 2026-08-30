@@ -329,14 +329,18 @@ struct RenderedTooling {
 
 /// Map the neutral effort ladder onto Codex's `model_reasoning_effort`
 /// configuration value. The accepted set per the Codex configuration
-/// reference (checked 2026-08-30): `minimal`, `low`, `medium`, `high`,
-/// `xhigh` — model support within that set is Codex's own concern.
-/// `max` exists on no Codex surface, so it fails typed before spawn.
+/// reference (checked 2026-08-30): `none`, `minimal`, `low`, `medium`,
+/// `high`, `xhigh` — model support within that set is Codex's own
+/// concern. `max` exists on no Codex surface, so it fails typed before
+/// spawn.
 fn codex_effort(effort: Effort) -> Result<&'static str, TurnError> {
     match effort {
-        Effort::Minimal | Effort::Low | Effort::Medium | Effort::High | Effort::XHigh => {
-            Ok(effort.as_str())
-        }
+        Effort::None
+        | Effort::Minimal
+        | Effort::Low
+        | Effort::Medium
+        | Effort::High
+        | Effort::XHigh => Ok(effort.as_str()),
         Effort::Max => Err(TurnError::Config {
             message: "Codex's model_reasoning_effort tops out at xhigh; there is no `max` \
                       tier — configure the agent with Effort::XHigh or leave effort unset \
@@ -893,6 +897,7 @@ mod tests {
     #[test]
     fn effort_maps_onto_the_codex_configuration_set_or_fails_typed() {
         for (level, wire) in [
+            (Effort::None, "none"),
             (Effort::Minimal, "minimal"),
             (Effort::Low, "low"),
             (Effort::Medium, "medium"),

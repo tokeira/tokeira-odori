@@ -181,7 +181,12 @@ impl AgentDirectives {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Effort {
-    /// The floor: as little deliberation as the backend can be asked for.
+    /// Explicitly no deliberation, where the backend can be told so — as
+    /// distinct from leaving effort unset, which means the backend's own
+    /// default.
+    None,
+    /// The floor above none: as little deliberation as the backend can be
+    /// asked for.
     Minimal,
     /// Light deliberation.
     Low,
@@ -200,6 +205,7 @@ impl Effort {
     /// representation.
     pub fn as_str(self) -> &'static str {
         match self {
+            Effort::None => "none",
             Effort::Minimal => "minimal",
             Effort::Low => "low",
             Effort::Medium => "medium",

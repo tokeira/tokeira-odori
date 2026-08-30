@@ -223,15 +223,15 @@ impl ClaudeProvider {
 
 /// Map the neutral effort ladder onto `--effort` as the pinned harness
 /// accepts it. Verified against the 2.1.220 binary's own usage text
-/// (2026-08-30): `low`, `medium`, `high`, `xhigh`, `max` — the pin has no
-/// minimal tier, and a level the harness would reject is a configuration
-/// error **before** any process spawns, never a misclassified harness
-/// death.
+/// (2026-08-30): `low`, `medium`, `high`, `xhigh`, `max` — the pin has
+/// neither a `none` nor a `minimal` tier, and a level the harness would
+/// reject is a configuration error **before** any process spawns, never
+/// a misclassified harness death.
 fn claude_effort(effort: Effort) -> Result<&'static str, TurnError> {
     match effort {
-        Effort::Minimal => Err(TurnError::Config {
+        Effort::None | Effort::Minimal => Err(TurnError::Config {
             message: format!(
-                "the Claude Code harness (pinned {PINNED_VERSION}) has no `minimal` effort \
+                "the Claude Code harness (pinned {PINNED_VERSION}) has no `{effort}` effort \
                  tier; its `--effort` accepts low, medium, high, xhigh, or max — configure \
                  the agent with Effort::Low or leave effort unset for the harness default"
             ),
@@ -603,6 +603,23 @@ mod tests {
         match provider.build_command(&minimal) {
             Err(TurnError::Config { message }) => {
                 assert!(message.contains("minimal") && message.contains(PINNED_VERSION));
+            }
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
+        let mut none = TurnRequest::new(
+            TurnIdentity {
+                run_id: "r".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            AgentDirectives::new("a", "i"),
+            "hello",
+            SessionDirective::Start,
+        );
+        none.directives.effort = Some(Effort::None);
+        match provider.build_command(&none) {
+            Err(TurnError::Config { message }) => {
+                assert!(message.contains("none") && message.contains(PINNED_VERSION));
             }
             other => panic!("expected a typed configuration error, got {other:?}"),
         }

@@ -353,6 +353,44 @@ mod anthropic {
     }
 
     #[tokio::test]
+    async fn provider_default_budget_applies_and_agent_effort_overrides_it() {
+        let mock = MockApi::start(vec![
+            text_exchange("with default budget", "end_turn"),
+            text_exchange("with explicit none", "end_turn"),
+        ])
+        .await;
+        set_test_key("ANTHROPIC_API_KEY");
+        let provider = AnthropicProvider::with_config(
+            AnthropicConfig::default()
+                .with_base_url(mock.url())
+                .with_thinking_budget(3000),
+        );
+
+        let (events, _r) = sink();
+        provider
+            .execute_turn(request("no effort set", SessionDirective::Start), events)
+            .await
+            .expect("default-budget turn");
+
+        let (events, _r) = sink();
+        let mut req = request("explicit none", SessionDirective::Start);
+        req.directives.effort = Some(Effort::None);
+        provider.execute_turn(req, events).await.expect("none turn");
+
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0].1["thinking"],
+            json!({"type": "enabled", "budget_tokens": 3000}),
+            "the provider-level raw budget applies when the agent sets no effort"
+        );
+        assert!(
+            requests[1].1.get("thinking").is_none(),
+            "agent-level Effort::None overrides the provider default and disables thinking"
+        );
+    }
+
+    #[tokio::test]
     async fn retry_honors_retry_after_then_succeeds() {
         let mock = MockApi::start(vec![
             Scripted::Json {

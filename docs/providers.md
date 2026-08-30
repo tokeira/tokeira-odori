@@ -141,8 +141,10 @@ server errors retry with bounded backoff and then surface as retryable
 ## Reasoning effort
 
 `Agent::with_effort(Effort)` sets a provider-neutral deliberation level:
-`minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — the union of the
-vendor surfaces Odori drives. Unset means the backend's own default.
+`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — the
+union of the vendor surfaces Odori drives. Unset means the backend's own
+default; `none` is the explicit request for no deliberation, where the
+backend can be told so.
 Every (provider, level) pair either maps onto that backend's lever or
 fails **before spawn** as a non-retryable `TurnError::Config` naming the
 gap; a level is never silently ignored, clamped, or coerced. Like model
@@ -152,8 +154,9 @@ registry change applies.
 
 | Effort | Claude Code (pinned 2.1.220) | Codex app-server | Anthropic Messages API | OpenAI Responses API |
 | --- | --- | --- | --- | --- |
-| `minimal` | **config error** — the pin has no minimal tier | `model_reasoning_effort = "minimal"` | thinking stays disabled (the API default, made explicit) | `reasoning.effort = "minimal"` |
-| `low` | `--effort low` | `"low"` | thinking budget 1024 | `"low"` |
+| `none` | **config error** — the pin has no none tier | `model_reasoning_effort = "none"` | thinking explicitly disabled | `reasoning.effort = "none"` |
+| `minimal` | **config error** — the pin has no minimal tier | `"minimal"` | thinking budget 1024 (the API's minimum) | `"minimal"` |
+| `low` | `--effort low` | `"low"` | thinking budget 2048 | `"low"` |
 | `medium` | `--effort medium` | `"medium"` | thinking budget 4096 | `"medium"` |
 | `high` | `--effort high` | `"high"` | thinking budget 8192 | `"high"` |
 | `xhigh` | `--effort xhigh` | `"xhigh"` | thinking budget 16384 | `"xhigh"` |
@@ -173,9 +176,14 @@ The Anthropic budgets are Odori's documented mapping onto the Messages
 API's numeric `thinking.budget_tokens` (the API has no levels). A budget
 must stay strictly below `max_tokens`; a level that does not fit is a
 configuration error naming `AnthropicConfig::with_max_tokens` as the
-remedy. With thinking enabled, streamed thinking blocks are assembled
-verbatim — text and signature — so the internal tool loop's assistant
-echo satisfies the API's thinking contract.
+remedy. Operators who want an exact number instead of the ladder's
+points set `AnthropicConfig::with_thinking_budget(n)` — the
+provider-level default for turns whose agent sets no effort, validated
+on use against the API's 1024-token floor and the `max_tokens` ceiling.
+An agent-level effort always overrides it, `Effort::None` included.
+With thinking enabled, streamed thinking blocks are assembled verbatim —
+text and signature — so the internal tool loop's assistant echo
+satisfies the API's thinking contract.
 
 ## Error surfaces
 

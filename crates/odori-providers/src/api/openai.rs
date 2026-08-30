@@ -345,15 +345,18 @@ fn classify_status(
 }
 
 /// Map the neutral effort ladder onto Responses `reasoning.effort`. The
-/// levels `minimal` through `xhigh` pass verbatim — which of them a given
+/// levels `none` through `xhigh` pass verbatim — which of them a given
 /// model accepts is the API's per-model contract, and a rejection comes
 /// back as a typed configuration error through [`classify_status`]. `max`
 /// exists on no OpenAI surface, so it fails typed before any request.
 fn openai_effort(effort: Effort) -> Result<&'static str, TurnError> {
     match effort {
-        Effort::Minimal | Effort::Low | Effort::Medium | Effort::High | Effort::XHigh => {
-            Ok(effort.as_str())
-        }
+        Effort::None
+        | Effort::Minimal
+        | Effort::Low
+        | Effort::Medium
+        | Effort::High
+        | Effort::XHigh => Ok(effort.as_str()),
         Effort::Max => Err(TurnError::Config {
             message: "the OpenAI Responses API has no `max` reasoning effort; its ladder \
                       tops out at xhigh (model-dependent) — configure the agent with \
@@ -370,6 +373,7 @@ mod tests {
     #[test]
     fn effort_passes_the_ladder_verbatim_and_rejects_max_typed() {
         for (level, wire) in [
+            (Effort::None, "none"),
             (Effort::Minimal, "minimal"),
             (Effort::Low, "low"),
             (Effort::Medium, "medium"),
