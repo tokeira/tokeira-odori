@@ -150,8 +150,13 @@ async fn logfire_scenario_emits_the_agent_trace_tree() -> Result<()> {
     ensure!(run.parent.is_none());
     ensure!(field(run, "gen_ai.agent.name") == Some("day-planner"));
     ensure!(field(run, "odori.run.id") == Some("logfire-1"));
-    ensure!(field(run, "gen_ai.usage.input_tokens") == Some("1380"));
-    ensure!(field(run, "gen_ai.usage.output_tokens") == Some("280"));
+    ensure!(field(run, "odori.run.input_tokens") == Some("1380"));
+    ensure!(field(run, "odori.run.output_tokens") == Some("280"));
+    ensure!(field(run, "odori.run.cost_usd") == Some("0.0075"));
+    ensure!(
+        field(run, "operation.cost").is_none() && field(run, "gen_ai.usage.input_tokens").is_none(),
+        "vendor accounting conventions must stay off the root span"
+    );
     ensure!(field(run, "odori.run.turns") == Some("2"));
     ensure!(field(run, "odori.run.end") == Some("conversation_ended"));
     ensure!(field(run, "otel.status_code") == Some("OK"));

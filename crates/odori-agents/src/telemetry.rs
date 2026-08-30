@@ -123,9 +123,14 @@ impl ClientRunTelemetry {
             gen_ai.operation.name = "invoke_agent",
             gen_ai.agent.name = agent,
             odori.run.id = run_id,
-            gen_ai.usage.input_tokens = field::Empty,
-            gen_ai.usage.output_tokens = field::Empty,
-            operation.cost = field::Empty,
+            // Run-level rollups deliberately avoid the gen_ai.usage.* and
+            // operation.cost names: backends aggregate those across a
+            // trace's spans, and the turn spans below already carry the
+            // per-spend truth — vendor-convention accounting on the root
+            // would double-count it (observed in Logfire, 2026-08-30).
+            odori.run.input_tokens = field::Empty,
+            odori.run.output_tokens = field::Empty,
+            odori.run.cost_usd = field::Empty,
             odori.run.turns = field::Empty,
             odori.run.end = field::Empty,
             otel.status_code = field::Empty,
@@ -145,11 +150,11 @@ impl ClientRunTelemetry {
     /// Record the run's terminal accounting and outcome class.
     pub(crate) fn record_completion(&self, output: &RunOutput) {
         self.span
-            .record("gen_ai.usage.input_tokens", output.usage.input_tokens);
+            .record("odori.run.input_tokens", output.usage.input_tokens);
         self.span
-            .record("gen_ai.usage.output_tokens", output.usage.output_tokens);
+            .record("odori.run.output_tokens", output.usage.output_tokens);
         self.span
-            .record("operation.cost", output.usage.total_cost_usd);
+            .record("odori.run.cost_usd", output.usage.total_cost_usd);
         self.span.record("odori.run.turns", output.turns);
         let end = match output.end {
             RunEnd::Completed => "completed",
@@ -587,9 +592,16 @@ mod tests {
             telemetry.record_completion(&output);
 
             let captured = capture.captured(&run_id);
-            assert_eq!(field(&captured, "gen_ai.usage.input_tokens"), Some("1380"));
-            assert_eq!(field(&captured, "gen_ai.usage.output_tokens"), Some("280"));
-            assert_eq!(field(&captured, "operation.cost"), Some("0.0075"));
+            assert_eq!(field(&captured, "odori.run.input_tokens"), Some("1380"));
+            assert_eq!(field(&captured, "odori.run.output_tokens"), Some("280"));
+            assert_eq!(field(&captured, "odori.run.cost_usd"), Some("0.0075"));
+            assert_eq!(
+                field(&captured, "operation.cost"),
+                None,
+                "vendor cost conventions stay off the root: trace-level \
+                 aggregation would double-count the turns' spend"
+            );
+            assert_eq!(field(&captured, "gen_ai.usage.input_tokens"), None);
             assert_eq!(field(&captured, "odori.run.turns"), Some("2"));
             assert_eq!(field(&captured, "odori.run.end"), Some("completed"));
             assert_eq!(field(&captured, "otel.status_code"), Some("OK"));

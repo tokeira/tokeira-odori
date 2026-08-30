@@ -32,7 +32,7 @@ engine's own spans do.
 
 | Span / event | Attributes set at creation | Recorded at completion |
 | --- | --- | --- |
-| `invoke_agent` (per run) | `gen_ai.operation.name`, `gen_ai.agent.name`, `odori.run.id` | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `operation.cost`, `odori.run.turns`, `odori.run.end` (`completed` \| `conversation_ended` \| `budget_exceeded` \| `guardrail_blocked`), `otel.status_code` |
+| `invoke_agent` (per run) | `gen_ai.operation.name`, `gen_ai.agent.name`, `odori.run.id` | `odori.run.input_tokens`, `odori.run.output_tokens`, `odori.run.cost_usd`, `odori.run.turns`, `odori.run.end` (`completed` \| `conversation_ended` \| `budget_exceeded` \| `guardrail_blocked`), `otel.status_code` |
 | `chat` (per turn attempt) | `gen_ai.operation.name`, `gen_ai.system` **and** `gen_ai.provider.name` (both, for maximum backend compatibility), `gen_ai.request.model` (when the agent pins one), `gen_ai.agent.name`, `odori.run.id`, `odori.turn`, `odori.turn.attempt` | `gen_ai.conversation.id` (backend session id, recorded as soon as the provider reports it), `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `operation.cost`, `otel.status_code`, `error.type` (the [`TurnError`](providers.md#error-surfaces) class) on failure |
 | `execute_tool` (per durable tool execution) | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.agent.name`, `odori.run.id`, `odori.turn`, `odori.turn.attempt` | `odori.tool.is_error` (model-visible tool failures are successful executions of a failing tool), `otel.status_code`, `error.type` |
 | `harness tool use` (event) | `gen_ai.tool.name` — the backend invoked a native or MCP tool mid-turn; harnesses report the fact, not the duration | — |
@@ -41,6 +41,13 @@ engine's own spans do.
 convention). Usage attributes are recorded only when the backend reported
 them — an unknown figure is absent, never zero, matching the run's
 [budget accounting](budgets-and-handoffs.md).
+
+Vendor accounting conventions (`gen_ai.usage.*`, `operation.cost`)
+appear **only on turn spans**, where the spend occurs: backends
+aggregate them across a trace, so the run span's rollup rides
+odori-namespaced attributes instead. This is a measured fix — with the
+rollup also on the root, Logfire's trace cost chip displayed exactly
+double the real spend (observed 2026-08-30).
 
 ## Redaction
 
@@ -108,9 +115,15 @@ and attribute set, and that no content string reaches any span field.
 
 ## Scope and limits, measured
 
-Claims here were verified on 2026-08-30 against `tracing-subscriber`
-capture in-process (unit and integration tests in-tree) and the Logfire
-platform docs current that day.
+Claims here were verified on 2026-08-30, three ways: `tracing-subscriber`
+capture in-process (the unit and integration tests in-tree assert the
+tree, attributes, accounting, and content redaction), the Logfire
+platform docs current that day, and a live export of the
+[logfire example](examples/logfire.md)'s trace confirmed in the Logfire
+Live view — one `invoke_agent day-planner` root with its four nested
+rows and a cost chip. That live check is also what caught the
+double-counted cost chip fixed by the turn-spans-only accounting rule
+above.
 
 - **Cross-process parenting.** Turn and tool spans adopt the run span
   through a process-local registry. In Odori's flagship embedded mode —
