@@ -1656,6 +1656,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_filter"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "900d271a03799a1ee8d1ca9b19893b48ca674a9284fefcfb85f05e74ed314217"
+dependencies = [
+ "log",
+ "regex",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2347,7 +2357,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -2724,6 +2734,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "logfire"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32c1632fcb0c1257b14cdec68c1cdd262928a14eee111b0638f1727a0fe7efab"
+dependencies = [
+ "chrono",
+ "env_filter",
+ "futures-util",
+ "log",
+ "logfire-core",
+ "nu-ansi-term",
+ "opentelemetry 0.32.0",
+ "opentelemetry-otlp 0.32.0",
+ "opentelemetry_sdk 0.32.1",
+ "rand 0.10.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry 0.33.0",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "logfire-core"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "067d61220d3bd337bc7a6e50dc5bc2c4f9e4b24f04b5c8e6e6b7746711c05656"
+
+[[package]]
 name = "lru"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2975,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "odori"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "odori-agents",
  "odori-engine",
@@ -2985,7 +3026,7 @@ dependencies = [
 
 [[package]]
 name = "odori-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3009,6 +3050,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "logfire",
  "odori",
  "odori-agents",
  "odori-engine",
@@ -3018,14 +3060,16 @@ dependencies = [
  "serde",
  "serde_json",
  "temporalio-client",
- "tokeira-engine",
- "tokeira-managed-dsql",
+ "tokeira-engine 0.1.0",
+ "tokeira-managed-dsql 0.1.0",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "odori-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "odori-agents",
@@ -3035,15 +3079,15 @@ dependencies = [
  "temporalio-macros",
  "temporalio-sdk",
  "temporalio-sdk-core",
- "tokeira-config",
- "tokeira-engine",
+ "tokeira-config 0.1.1",
+ "tokeira-engine 0.1.1",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "odori-mcp-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3066,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "odori-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -3246,6 +3290,8 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.5",
  "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -3647,7 +3693,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -3681,7 +3727,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3823,7 +3869,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.43",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3836,6 +3882,7 @@ version = "0.11.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04759210543be93709136e28212294a659ef5001836ff4eab4d663e4529bba83"
 dependencies = [
+ "aws-lc-rs",
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
@@ -3861,7 +3908,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -4130,6 +4177,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
  "rustls 0.23.43",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -5370,7 +5418,30 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "time",
- "tokeira-types",
+ "tokeira-types 0.1.0",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "tokeira-auth"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ac59513abeccc9e959a0020d7b9bd073b8d03537a5a0c931d0398b6f6b9ceb5"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "jsonwebtoken",
+ "quick-xml",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "time",
+ "tokeira-types 0.1.1",
  "tokio",
  "tracing",
  "url",
@@ -5386,6 +5457,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokeira-build-info"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f1cb8d77dbacf416b78281c5dbff768fc6d6f4f3d2f8471132eb5363deffe4a"
+dependencies = [
+ "regex",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "tokeira-chasm"
 version = "0.1.0"
 source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
@@ -5393,8 +5474,21 @@ dependencies = [
  "prost 0.12.6",
  "serde",
  "thiserror 2.0.20",
- "tokeira-proto",
- "tokeira-types",
+ "tokeira-proto 0.1.0",
+ "tokeira-types 0.1.0",
+]
+
+[[package]]
+name = "tokeira-chasm"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0eb825e643d423d7bfe7a2a338a2560b94a7201e94a6bb08b319dcdfd6cdda2d"
+dependencies = [
+ "prost 0.12.6",
+ "serde",
+ "thiserror 2.0.20",
+ "tokeira-proto 0.1.1",
+ "tokeira-types 0.1.1",
 ]
 
 [[package]]
@@ -5406,16 +5500,43 @@ dependencies = [
  "prost 0.12.6",
  "serde",
  "thiserror 2.0.20",
- "tokeira-chasm",
- "tokeira-chasm-derive",
- "tokeira-proto",
- "tokeira-types",
+ "tokeira-chasm 0.1.0",
+ "tokeira-chasm-derive 0.1.0",
+ "tokeira-proto 0.1.0",
+ "tokeira-types 0.1.0",
+]
+
+[[package]]
+name = "tokeira-chasm-activity"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd004bb4debab06b132bd59d22b6e0fa61326fb17c02ef0d77f665b1073b305"
+dependencies = [
+ "postcard",
+ "prost 0.12.6",
+ "serde",
+ "thiserror 2.0.20",
+ "tokeira-chasm 0.1.1",
+ "tokeira-chasm-derive 0.1.1",
+ "tokeira-proto 0.1.1",
+ "tokeira-types 0.1.1",
 ]
 
 [[package]]
 name = "tokeira-chasm-derive"
 version = "0.1.0"
 source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "tokeira-chasm-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7b952ea46eb7503a50744c33322ef51f1a876193e4383e85d429c86ed56484e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5430,7 +5551,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokeira-build-info",
+ "tokeira-build-info 0.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "tokeira-compatibility"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4c02c69ce62251618361a4944dea35399977f9e1af74e359e0aa7a73ed56fc9"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokeira-build-info 0.1.1",
  "tracing",
 ]
 
@@ -5444,7 +5578,24 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokeira-auth",
+ "tokeira-auth 0.1.0",
+ "toml 0.8.23",
+ "toml_edit",
+ "tracing",
+]
+
+[[package]]
+name = "tokeira-config"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "628fb6b0e6641b098406be1d6af2eed86a9fc84d87cf98abb7d2ef79d10c8087"
+dependencies = [
+ "async-trait",
+ "clap",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokeira-auth 0.1.1",
  "toml 0.8.23",
  "toml_edit",
  "tracing",
@@ -5476,24 +5627,73 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "time",
- "tokeira-auth",
- "tokeira-build-info",
- "tokeira-chasm",
- "tokeira-chasm-activity",
- "tokeira-compatibility",
- "tokeira-kernel",
- "tokeira-projection",
- "tokeira-proto",
- "tokeira-runtime",
- "tokeira-storage",
- "tokeira-types",
+ "tokeira-auth 0.1.0",
+ "tokeira-build-info 0.1.0",
+ "tokeira-chasm 0.1.0",
+ "tokeira-chasm-activity 0.1.0",
+ "tokeira-compatibility 0.1.0",
+ "tokeira-kernel 0.1.0",
+ "tokeira-projection 0.1.0",
+ "tokeira-proto 0.1.0",
+ "tokeira-runtime 0.1.0",
+ "tokeira-storage 0.1.0",
+ "tokeira-types 0.1.0",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tonic 0.11.0",
  "tower 0.4.13",
  "tracing",
- "tracing-opentelemetry",
+ "tracing-opentelemetry 0.32.1",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "tokeira-edge"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "800e7d7f74bba74cb48659872b2f640d3bf0a3b62c8fb15295f6281eca192fc5"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "buffa",
+ "bytes",
+ "connectrpc",
+ "http 1.5.0",
+ "http-body 0.4.6",
+ "hyper 0.14.32",
+ "metrics",
+ "opentelemetry 0.31.0",
+ "opentelemetry_sdk 0.31.0",
+ "percent-encoding",
+ "prost 0.12.6",
+ "prost-reflect",
+ "prost-types 0.12.6",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tokeira-auth 0.1.1",
+ "tokeira-build-info 0.1.1",
+ "tokeira-chasm 0.1.1",
+ "tokeira-chasm-activity 0.1.1",
+ "tokeira-compatibility 0.1.1",
+ "tokeira-kernel 0.1.1",
+ "tokeira-projection 0.1.1",
+ "tokeira-proto 0.1.1",
+ "tokeira-runtime 0.1.1",
+ "tokeira-storage 0.1.1",
+ "tokeira-types 0.1.1",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic 0.11.0",
+ "tower 0.4.13",
+ "tracing",
+ "tracing-opentelemetry 0.32.1",
  "url",
  "uuid",
 ]
@@ -5525,20 +5725,20 @@ dependencies = [
  "serde_json",
  "temporalio-client",
  "time",
- "tokeira-auth",
- "tokeira-build-info",
- "tokeira-chasm",
- "tokeira-chasm-activity",
- "tokeira-config",
- "tokeira-edge",
- "tokeira-kernel",
- "tokeira-managed-dsql",
- "tokeira-observability",
- "tokeira-projection",
- "tokeira-proto",
- "tokeira-runtime",
- "tokeira-storage",
- "tokeira-types",
+ "tokeira-auth 0.1.0",
+ "tokeira-build-info 0.1.0",
+ "tokeira-chasm 0.1.0",
+ "tokeira-chasm-activity 0.1.0",
+ "tokeira-config 0.1.0",
+ "tokeira-edge 0.1.0",
+ "tokeira-kernel 0.1.0",
+ "tokeira-managed-dsql 0.1.0",
+ "tokeira-observability 0.1.0",
+ "tokeira-projection 0.1.0",
+ "tokeira-proto 0.1.0",
+ "tokeira-runtime 0.1.0",
+ "tokeira-storage 0.1.0",
+ "tokeira-types 0.1.0",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -5550,7 +5750,64 @@ dependencies = [
  "tower 0.4.13",
  "tower-http 0.4.4",
  "tracing",
- "tracing-opentelemetry",
+ "tracing-opentelemetry 0.32.1",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tokeira-engine"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79c744ac30603ce7a87ff81a53a641c41b28140b4d231bd809d441b8023418c5"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "base64 0.22.1",
+ "bytes",
+ "clap",
+ "http 1.5.0",
+ "http-body 0.4.6",
+ "http-body-util",
+ "hyper 0.14.32",
+ "hyper 1.11.0",
+ "hyper-util",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "opentelemetry 0.31.0",
+ "opentelemetry-otlp 0.31.1",
+ "opentelemetry_sdk 0.31.0",
+ "percent-encoding",
+ "serde_json",
+ "temporalio-client",
+ "time",
+ "tokeira-auth 0.1.1",
+ "tokeira-build-info 0.1.1",
+ "tokeira-chasm 0.1.1",
+ "tokeira-chasm-activity 0.1.1",
+ "tokeira-config 0.1.1",
+ "tokeira-edge 0.1.1",
+ "tokeira-kernel 0.1.1",
+ "tokeira-managed-dsql 0.1.1",
+ "tokeira-observability 0.1.1",
+ "tokeira-projection 0.1.1",
+ "tokeira-proto 0.1.1",
+ "tokeira-runtime 0.1.1",
+ "tokeira-storage 0.1.1",
+ "tokeira-types 0.1.1",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml 0.8.23",
+ "tonic 0.11.0",
+ "tonic 0.14.6",
+ "tonic-reflection",
+ "tonic-web",
+ "tower 0.4.13",
+ "tower-http 0.4.4",
+ "tracing",
+ "tracing-opentelemetry 0.32.1",
  "tracing-subscriber",
 ]
 
@@ -5564,7 +5821,22 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.20",
  "time",
- "tokeira-types",
+ "tokeira-types 0.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "tokeira-kernel"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffb854b49fe00840e02537c23fdd45bed91b70c60d94dccf25fd3c6468e5d55a"
+dependencies = [
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.20",
+ "time",
+ "tokeira-types 0.1.1",
  "tracing",
 ]
 
@@ -5572,6 +5844,24 @@ dependencies = [
 name = "tokeira-managed-dsql"
 version = "0.1.0"
 source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dsql",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "tokeira-managed-dsql"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7760ccb2dacf45f50778f7481a25cb781eaddc473359a6b601607270096b3fdf"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5603,11 +5893,38 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "thiserror 2.0.20",
- "tokeira-types",
+ "tokeira-types 0.1.0",
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-opentelemetry",
+ "tracing-opentelemetry 0.32.1",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tokeira-observability"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e21efb2c577c5b4a2fb32fe0e318866c2fb2814d0756fd7a42b1fd199d535f4d"
+dependencies = [
+ "async-trait",
+ "http-body-util",
+ "hyper 1.11.0",
+ "hyper-util",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "opentelemetry 0.31.0",
+ "opentelemetry-otlp 0.31.1",
+ "opentelemetry_sdk 0.31.0",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.20",
+ "tokeira-types 0.1.1",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-opentelemetry 0.32.1",
  "tracing-subscriber",
 ]
 
@@ -5627,10 +5944,37 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.20",
  "time",
- "tokeira-kernel",
- "tokeira-observability",
- "tokeira-storage",
- "tokeira-types",
+ "tokeira-kernel 0.1.0",
+ "tokeira-observability 0.1.0",
+ "tokeira-storage 0.1.0",
+ "tokeira-types 0.1.0",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "tokeira-projection"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8796107fc863caa43636354c45f33ba675be994fe0081f279128502e1ddab828"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "async-trait",
+ "base64 0.22.1",
+ "metrics",
+ "ordered-float 4.6.0",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.20",
+ "time",
+ "tokeira-kernel 0.1.1",
+ "tokeira-observability 0.1.1",
+ "tokeira-storage 0.1.1",
+ "tokeira-types 0.1.1",
  "tokio",
  "tokio-util",
  "tracing",
@@ -5653,11 +5997,32 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "time",
- "tokeira-types",
+ "tokeira-types 0.1.0",
  "tonic 0.11.0",
  "tonic-build 0.11.0",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "tokeira-proto"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65ae11ac02c3596f697e9dbb999b29482c46b604ba2740e3d7281ea5acfb9728"
+dependencies = [
+ "buffa",
+ "buffa-types",
+ "connectrpc",
+ "http-body 1.1.0",
+ "prost 0.12.6",
+ "prost-types 0.12.6",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "time",
+ "tokeira-types 0.1.1",
+ "tonic 0.11.0",
+ "uuid",
 ]
 
 [[package]]
@@ -5686,19 +6051,63 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.20",
  "time",
- "tokeira-chasm",
- "tokeira-kernel",
- "tokeira-observability",
- "tokeira-projection",
- "tokeira-proto",
- "tokeira-storage",
- "tokeira-types",
+ "tokeira-chasm 0.1.0",
+ "tokeira-kernel 0.1.0",
+ "tokeira-observability 0.1.0",
+ "tokeira-projection 0.1.0",
+ "tokeira-proto 0.1.0",
+ "tokeira-storage 0.1.0",
+ "tokeira-types 0.1.0",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tonic 0.11.0",
  "tracing",
- "tracing-opentelemetry",
+ "tracing-opentelemetry 0.32.1",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "tokeira-runtime"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e44a598c8ea04c1d3f9b1b6b84470390da44b59f425675c6fe86d7f2c1788aab"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "buffa",
+ "buffa-types",
+ "chrono",
+ "chrono-tz",
+ "connectrpc",
+ "dashmap",
+ "metrics",
+ "opentelemetry 0.31.0",
+ "opentelemetry_sdk 0.31.0",
+ "percent-encoding",
+ "prost 0.12.6",
+ "prost-types 0.12.6",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.20",
+ "time",
+ "tokeira-chasm 0.1.1",
+ "tokeira-kernel 0.1.1",
+ "tokeira-observability 0.1.1",
+ "tokeira-projection 0.1.1",
+ "tokeira-proto 0.1.1",
+ "tokeira-storage 0.1.1",
+ "tokeira-types 0.1.1",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic 0.11.0",
+ "tracing",
+ "tracing-opentelemetry 0.32.1",
  "url",
  "uuid",
 ]
@@ -5723,10 +6132,41 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.20",
  "time",
- "tokeira-chasm",
- "tokeira-kernel",
- "tokeira-observability",
- "tokeira-types",
+ "tokeira-chasm 0.1.0",
+ "tokeira-kernel 0.1.0",
+ "tokeira-observability 0.1.0",
+ "tokeira-types 0.1.0",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "tokeira-storage"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009c65e9e5792aa19052324fbabd492d568c9b1fd732f347c31121a610ecd732"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "async-trait",
+ "aurora-dsql-sqlx-connector",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-smithy-runtime-api",
+ "metrics",
+ "postcard",
+ "rand 0.8.7",
+ "serde",
+ "sha2 0.10.9",
+ "sqlx",
+ "thiserror 2.0.20",
+ "time",
+ "tokeira-chasm 0.1.1",
+ "tokeira-kernel 0.1.1",
+ "tokeira-observability 0.1.1",
+ "tokeira-types 0.1.1",
  "tokio",
  "toml 0.8.23",
  "tracing",
@@ -5737,6 +6177,19 @@ dependencies = [
 name = "tokeira-types"
 version = "0.1.0"
 source = "git+ssh://git@github.com/tokeira/tokeira.git?rev=8815c925011a4520282aa1e94478aae97c05c472#8815c925011a4520282aa1e94478aae97c05c472"
+dependencies = [
+ "blake3",
+ "serde",
+ "thiserror 2.0.20",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "tokeira-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acaffe91219ff65083554079fc4e9635878507eb2e1e63707c29bf2d5e0426cc"
 dependencies = [
  "blake3",
  "serde",
@@ -6212,6 +6665,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-opentelemetry"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
+dependencies = [
+ "js-sys",
+ "opentelemetry 0.32.0",
+ "smallvec",
+ "tracing",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
+ "web-time",
+]
+
+[[package]]
 name = "tracing-serde"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6642,7 +7111,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

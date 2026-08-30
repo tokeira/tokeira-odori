@@ -34,6 +34,7 @@ pub mod output;
 pub mod provider;
 pub mod run;
 pub mod runner;
+pub(crate) mod telemetry;
 pub mod tool;
 
 pub use agent::{Agent, AgentRegistry};
@@ -41,7 +42,7 @@ pub use guardrail::{Guardrail, GuardrailVerdict, RunBudget};
 pub use handoff::{Handoff, HandoffContext};
 pub use invocation::{InvocationId, InvocationRegistry, ToolCallResult};
 pub use output::{AgentOutput, Json};
-pub use provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
+pub use provider::{Effort, Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
 pub use run::{
     AgentRun, BudgetCap, Providers, RunConfig, RunEnd, RunOutput, RunUsage, TurnActivities,
     TurnRecord,

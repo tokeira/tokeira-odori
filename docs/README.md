@@ -11,6 +11,8 @@ Use these guides after the root [quickstart](../README.md#quickstart).
   tool replay.
 - [Budgets and handoffs](budgets-and-handoffs.md) explains deterministic
   spend enforcement and child workflows.
+- [Observability](observability.md) covers the GenAI-convention trace
+  tree, the host-owned exporter model, redaction, and Pydantic Logfire.
 - [Aurora DSQL clusters](dsql-clusters.md) covers managed creation,
   operator-owned adoption, descriptors, IAM requirements, and teardown.
 - [Examples](examples/README.md) maps each executable example to the behavior

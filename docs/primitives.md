@@ -6,8 +6,9 @@ Rust; execution state lives in workflow history.
 ## Agent
 
 An `Agent` is a named configuration. It owns instructions and may select a
-provider and model, expose tools and handoffs, add input and output guardrails,
-declare an output schema, and set a budget.
+provider, model, and [reasoning effort](providers.md#reasoning-effort),
+expose tools and handoffs, add input and output guardrails, declare an
+output schema, and set a budget.
 
 The worker resolves agents by name from an `AgentRegistry`. Agent objects are
 not serialized into workflow inputs because they contain live tool handlers and

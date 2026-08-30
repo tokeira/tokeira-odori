@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use odori_agents::provider::{
-    AgentDirectives, McpServerConfig, McpTransport, Provider, SessionDirective, TurnEvent,
-    TurnEventSink, TurnIdentity, TurnRequest,
+    AgentDirectives, Effort, McpServerConfig, McpTransport, Provider, SessionDirective, TurnError,
+    TurnEvent, TurnEventSink, TurnIdentity, TurnRequest,
 };
 use odori_providers::{CodexProvider, EXPECTED_CODEX_CLI_VERSION};
 use tokio::sync::mpsc;
@@ -69,6 +69,9 @@ for line in sys.stdin:
         if os.environ.get(token_variable) != "Bearer test-token":
             emit({{"id": request_id, "error": {{"code": -32600, "message": "missing MCP token env"}}}})
             continue
+        if config.get("model_reasoning_effort") != "high":
+            emit({{"id": request_id, "error": {{"code": -32600, "message": "missing model_reasoning_effort"}}}})
+            continue
         emit({{"method": "thread/started", "params": {{"thread": {{"id": "thread-fake"}}}}}})
         emit({{"id": request_id, "result": {{"thread": {{"id": "thread-fake"}}}}}})
     elif method == "turn/start":
@@ -95,6 +98,7 @@ async fn scripted_app_server_turn_streams_events_and_result() {
     let provider = CodexProvider::with_command(&command);
     let (sender, mut receiver) = mpsc::channel(32);
     let mut turn = request("run the fake turn");
+    turn.directives.effort = Some(Effort::High);
     turn.tooling.mcp_servers.push(McpServerConfig {
         name: "odori".into(),
         transport: McpTransport::Http {
@@ -134,6 +138,28 @@ async fn scripted_app_server_turn_streams_events_and_result() {
             .any(|event| matches!(event, TurnEvent::Liveness))
     );
 
+    std::fs::remove_file(command).expect("remove fake Codex executable");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unmappable_effort_fails_typed_before_the_session_spawns() {
+    // The scripted fake answers the version probe; the fake's thread/start
+    // handler would reject anything but `high`, so the xhigh-shaped
+    // configuration error proves Max was rejected before an app-server
+    // session ever started.
+    let command = scripted_codex();
+    let provider = CodexProvider::with_command(&command);
+    let (sender, _receiver) = mpsc::channel(4);
+    let mut turn = request("never runs");
+    turn.directives.effort = Some(Effort::Max);
+    match provider
+        .execute_turn(turn, TurnEventSink::new(sender))
+        .await
+    {
+        Err(TurnError::Config { message }) => assert!(message.contains("xhigh"), "{message}"),
+        other => panic!("expected a typed configuration error, got {other:?}"),
+    }
     std::fs::remove_file(command).expect("remove fake Codex executable");
 }
 

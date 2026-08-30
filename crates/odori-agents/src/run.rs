@@ -49,6 +49,8 @@ use temporalio_sdk::{
 use thiserror::Error;
 use tokio::sync::mpsc;
 
+use tracing::Instrument as _;
+
 use crate::{
     agent::AgentRegistry,
     guardrail::{GuardrailVerdict, RunBudget},
@@ -58,6 +60,7 @@ use crate::{
         Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnIdentity, TurnOutcome,
         TurnRequest, TurnUsage,
     },
+    telemetry,
     tool::{ToolContext, ToolFailure, ToolPolicy},
 };
 
@@ -1000,21 +1003,28 @@ impl TurnActivities {
             turn: input.turn,
             attempt,
         };
+        let workflow_id = info.workflow_id.clone().unwrap_or_default();
         let mut request =
             TurnRequest::new(identity.clone(), agent.directives(), input.input, session);
         request.tooling = agent.tooling();
         if let Some(source) = &self.attachments
-            && let Some(attachment) = source.attachment_for(
-                info.workflow_id.as_deref().unwrap_or_default(),
-                &identity,
-                agent.name(),
-            )
+            && let Some(attachment) = source.attachment_for(&workflow_id, &identity, agent.name())
         {
             request.tooling.mcp_servers.push(attachment.mcp_server);
             request.tooling.mcp_timeout = attachment.mcp_timeout;
             let allowed = request.tooling.allowed_native_tools.get_or_insert_default();
             allowed.extend(attachment.allowed_tools);
         }
+
+        let span = telemetry::turn_span(
+            &workflow_id,
+            agent.name(),
+            provider.name(),
+            request.directives.model.as_deref(),
+            input.turn,
+            attempt,
+        );
+        let _turn_registration = telemetry::register_turn(&workflow_id, &span);
 
         // Pump provider events into activity heartbeats; the session id
         // rides every heartbeat as the retry-recovery anchor.
@@ -1024,24 +1034,38 @@ impl TurnActivities {
         let prior_usage = prior.usage.clone();
         let pump_prior_usage = prior_usage.clone();
         let pump_usage_snapshot = usage_snapshot.clone();
-        let pump = tokio::spawn(async move {
-            let mut state = prior;
-            while let Some(event) = receiver.recv().await {
-                if let TurnEvent::SessionStarted { session_id } = &event {
-                    state.session_id = Some(session_id.clone());
+        let pump_span = span.clone();
+        let pump = tokio::spawn(
+            async move {
+                let mut state = prior;
+                while let Some(event) = receiver.recv().await {
+                    match &event {
+                        TurnEvent::SessionStarted { session_id } => {
+                            state.session_id = Some(session_id.clone());
+                            telemetry::record_session(&pump_span, session_id);
+                        }
+                        TurnEvent::ToolUse { name } => {
+                            telemetry::record_harness_tool_use(&pump_span, name);
+                        }
+                        _ => {}
+                    }
+                    state.usage = carry_usage_snapshot(
+                        &pump_prior_usage,
+                        &pump_usage_snapshot
+                            .lock()
+                            .expect("turn usage snapshot lock"),
+                    );
+                    let _ = heartbeat_ctx.record_heartbeat(state.clone()).await;
                 }
-                state.usage = carry_usage_snapshot(
-                    &pump_prior_usage,
-                    &pump_usage_snapshot
-                        .lock()
-                        .expect("turn usage snapshot lock"),
-                );
-                let _ = heartbeat_ctx.record_heartbeat(state.clone()).await;
+                state
             }
-            state
-        });
+            .instrument(span.clone()),
+        );
 
-        let outcome = provider.execute_turn(request, event_sink).await;
+        let outcome = provider
+            .execute_turn(request, event_sink)
+            .instrument(span.clone())
+            .await;
         let mut heartbeat = pump.await.unwrap_or_default();
         heartbeat.usage = carry_usage_snapshot(
             &prior_usage,
@@ -1054,9 +1078,14 @@ impl TurnActivities {
         match outcome {
             Ok(mut outcome) => {
                 outcome.usage = aggregate_success_usage(&prior_usage, &outcome.usage);
-                Ok(outcome.into())
+                let output: TurnActivityOutput = outcome.into();
+                telemetry::record_turn_success(&span, &output);
+                Ok(output)
             }
-            Err(error) => Err(turn_failure(&error)),
+            Err(error) => {
+                telemetry::record_turn_failure(&span, &error);
+                Err(turn_failure(&error))
+            }
         }
     }
 }
@@ -1405,34 +1434,51 @@ impl ToolActivities {
         ctx: ActivityContext,
         input: ExecuteToolInput,
     ) -> Result<ToolCallResult, ActivityError> {
-        let agent = self
-            .registry
-            .get(&input.agent)
-            .map_err(|error| terminal_failure("odori::tool::unknown_agent", &error))?;
-        let tool = agent
-            .tools()
-            .iter()
-            .find(|tool| tool.name() == input.tool)
-            .ok_or_else(|| {
-                terminal_failure(
-                    "odori::tool::unknown_tool",
-                    &crate::agent::UnknownAgent {
-                        name: input.tool.clone(),
-                    },
-                )
-            })?;
+        let info = ctx.info();
+        let span = telemetry::tool_span(
+            info.workflow_id.as_deref().unwrap_or_default(),
+            &input.agent,
+            &input.tool,
+            &input.identity.call_id,
+            input.identity.turn,
+            input.identity.attempt,
+        );
+        let agent = match self.registry.get(&input.agent) {
+            Ok(agent) => agent,
+            Err(error) => {
+                telemetry::record_tool_failure(&span, "odori::tool::unknown_agent");
+                return Err(terminal_failure("odori::tool::unknown_agent", &error));
+            }
+        };
+        let Some(tool) = agent.tools().iter().find(|tool| tool.name() == input.tool) else {
+            telemetry::record_tool_failure(&span, "odori::tool::unknown_tool");
+            return Err(terminal_failure(
+                "odori::tool::unknown_tool",
+                &crate::agent::UnknownAgent {
+                    name: input.tool.clone(),
+                },
+            ));
+        };
         let context = ToolContext {
-            run_id: ctx.info().workflow_run_id.clone().unwrap_or_default(),
+            run_id: info.workflow_run_id.clone().unwrap_or_default(),
             turn: input.identity.turn,
             attempt: input.identity.attempt,
             invocation_id: input.identity.call_id.clone(),
         };
-        match tool.invoke(context, input.arguments).await {
-            Ok(value) => Ok(cap_result(
-                tool_output_to_result(value),
-                self.max_result_bytes,
-            )),
-            Err(failure) => Err(tool_failure(&failure)),
+        match tool
+            .invoke(context, input.arguments)
+            .instrument(span.clone())
+            .await
+        {
+            Ok(value) => {
+                let result = cap_result(tool_output_to_result(value), self.max_result_bytes);
+                telemetry::record_tool_result(&span, result.is_error);
+                Ok(result)
+            }
+            Err(failure) => {
+                telemetry::record_tool_failure(&span, "odori::tool::failed");
+                Err(tool_failure(&failure))
+            }
         }
     }
 }

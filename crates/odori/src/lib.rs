@@ -23,9 +23,9 @@ pub use odori_mcp_bridge as mcp_bridge;
 pub use odori_providers as providers;
 
 pub use odori_agents::{
-    Agent, AgentOutput, AgentRegistry, Conversation, Guardrail, GuardrailVerdict, Json, Provider,
-    Providers, RunBudget, RunConfig, RunEnd, RunOutput, Runner, RunnerError, Tool, ToolFailure,
-    ToolPolicy, TurnRecord,
+    Agent, AgentOutput, AgentRegistry, Conversation, Effort, Guardrail, GuardrailVerdict, Json,
+    Provider, Providers, RunBudget, RunConfig, RunEnd, RunOutput, Runner, RunnerError, Tool,
+    ToolFailure, ToolPolicy, TurnRecord,
 };
 pub use odori_engine::{
     ClusterStartupReport, ConnectTarget, DsqlMigrationPolicy, EmbeddedConfigError,

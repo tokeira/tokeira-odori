@@ -20,7 +20,20 @@ use thiserror::Error;
 use crate::{
     output::{AgentOutput, OutputParseError},
     run::{AgentRun, RunConfig, RunEnd, RunInput, RunOutput, TurnActivities, TurnRecord},
+    telemetry,
 };
+
+/// Run a client future inside the conversation's run span, when one is
+/// held (reattached conversations have none).
+async fn scoped<T>(
+    telemetry: &Option<telemetry::ClientRunTelemetry>,
+    future: impl Future<Output = T>,
+) -> T {
+    match telemetry {
+        Some(telemetry) => telemetry.scope(future).await,
+        None => future.await,
+    }
+}
 
 /// Register Odori's workflow and activities on a worker under assembly.
 ///
@@ -106,25 +119,36 @@ impl Runner {
             interactive: true,
             ..RunConfig::default()
         };
-        let handle = self
-            .client
-            .start_workflow(
-                AgentRun::run,
-                RunInput {
-                    agent: agent.to_owned(),
-                    prompt: prompt.to_owned(),
-                    config,
-                    handoff: None,
-                },
-                WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned())
-                    .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
-                    .build(),
+        let telemetry = telemetry::ClientRunTelemetry::start(agent, run_id);
+        let started = telemetry
+            .scope(
+                self.client.start_workflow(
+                    AgentRun::run,
+                    RunInput {
+                        agent: agent.to_owned(),
+                        prompt: prompt.to_owned(),
+                        config,
+                        handoff: None,
+                    },
+                    WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned())
+                        .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
+                        .build(),
+                ),
             )
-            .await
-            .map_err(|error| RunnerError::Client {
-                message: error.to_string(),
-            })?;
-        Ok(Conversation { handle })
+            .await;
+        let handle = match started {
+            Ok(handle) => handle,
+            Err(error) => {
+                telemetry.record_client_failure();
+                return Err(RunnerError::Client {
+                    message: error.to_string(),
+                });
+            }
+        };
+        Ok(Conversation {
+            handle,
+            telemetry: Some(telemetry),
+        })
     }
 
     /// Reattach to an existing interactive run by workflow id.
@@ -139,6 +163,7 @@ impl Runner {
             handle: self.client.get_workflow_handle::<
                 <AgentRun as temporalio_workflow::runtime::entry::WorkflowImplementation>::Run,
             >(run_id),
+            telemetry: None,
         }
     }
 
@@ -149,30 +174,40 @@ impl Runner {
         run_id: &str,
         config: RunConfig,
     ) -> Result<RunOutput, RunnerError> {
-        let handle = self
-            .client
-            .start_workflow(
-                AgentRun::run,
-                RunInput {
-                    agent: agent.to_owned(),
-                    prompt: prompt.to_owned(),
-                    config,
-                    handoff: None,
-                },
-                WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned())
-                    .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
-                    .build(),
-            )
-            .await
-            .map_err(|error| RunnerError::Client {
-                message: error.to_string(),
-            })?;
-        handle
-            .get_result(WorkflowGetResultOptions::default())
-            .await
-            .map_err(|error| RunnerError::Run {
-                message: error.to_string(),
+        let telemetry = telemetry::ClientRunTelemetry::start(agent, run_id);
+        let result = telemetry
+            .scope(async {
+                let handle = self
+                    .client
+                    .start_workflow(
+                        AgentRun::run,
+                        RunInput {
+                            agent: agent.to_owned(),
+                            prompt: prompt.to_owned(),
+                            config,
+                            handoff: None,
+                        },
+                        WorkflowStartOptions::new(self.task_queue.clone(), run_id.to_owned())
+                            .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
+                            .build(),
+                    )
+                    .await
+                    .map_err(|error| RunnerError::Client {
+                        message: error.to_string(),
+                    })?;
+                handle
+                    .get_result(WorkflowGetResultOptions::default())
+                    .await
+                    .map_err(|error| RunnerError::Run {
+                        message: error.to_string(),
+                    })
             })
+            .await;
+        match &result {
+            Ok(output) => telemetry.record_completion(output),
+            Err(_) => telemetry.record_client_failure(),
+        }
+        result
     }
 
     fn interpret<O: AgentOutput>(output: RunOutput) -> Result<O, RunnerError> {
@@ -197,6 +232,10 @@ pub struct Conversation {
         Client,
         <AgentRun as temporalio_workflow::runtime::entry::WorkflowImplementation>::Run,
     >,
+    /// The run span held open for the conversation's lifetime. Present only
+    /// on the process that started the conversation; a reattached handle
+    /// follows the run without one.
+    telemetry: Option<telemetry::ClientRunTelemetry>,
 }
 
 impl fmt::Debug for Conversation {
@@ -212,46 +251,61 @@ impl Conversation {
     /// here before taking an embedded-engine snapshot. Observing provider-side
     /// output alone would race the workflow task that records the turn.
     pub async fn transcript(&self) -> Result<Vec<TurnRecord>, RunnerError> {
-        self.handle
-            .query(AgentRun::transcript, (), WorkflowQueryOptions::default())
-            .await
-            .map_err(|error| RunnerError::Client {
-                message: error.to_string(),
-            })
+        scoped(
+            &self.telemetry,
+            self.handle
+                .query(AgentRun::transcript, (), WorkflowQueryOptions::default()),
+        )
+        .await
+        .map_err(|error| RunnerError::Client {
+            message: error.to_string(),
+        })
     }
 
     /// Queue the next user message as a turn.
     pub async fn send(&self, message: &str) -> Result<(), RunnerError> {
-        self.handle
-            .signal(
+        scoped(
+            &self.telemetry,
+            self.handle.signal(
                 AgentRun::user_message,
                 message.to_owned(),
                 WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(|error| RunnerError::Client {
-                message: error.to_string(),
-            })
+            ),
+        )
+        .await
+        .map_err(|error| RunnerError::Client {
+            message: error.to_string(),
+        })
     }
 
     /// End the conversation and await the run's final output.
     pub async fn end(self) -> Result<RunOutput, RunnerError> {
-        self.handle
-            .signal(
-                AgentRun::end_conversation,
-                (),
-                WorkflowSignalOptions::default(),
-            )
-            .await
-            .map_err(|error| RunnerError::Client {
-                message: error.to_string(),
-            })?;
-        self.handle
-            .get_result(WorkflowGetResultOptions::default())
-            .await
-            .map_err(|error| RunnerError::Run {
-                message: error.to_string(),
-            })
+        let result = scoped(&self.telemetry, async {
+            self.handle
+                .signal(
+                    AgentRun::end_conversation,
+                    (),
+                    WorkflowSignalOptions::default(),
+                )
+                .await
+                .map_err(|error| RunnerError::Client {
+                    message: error.to_string(),
+                })?;
+            self.handle
+                .get_result(WorkflowGetResultOptions::default())
+                .await
+                .map_err(|error| RunnerError::Run {
+                    message: error.to_string(),
+                })
+        })
+        .await;
+        if let Some(telemetry) = &self.telemetry {
+            match &result {
+                Ok(output) => telemetry.record_completion(output),
+                Err(_) => telemetry.record_client_failure(),
+            }
+        }
+        result
     }
 }
 

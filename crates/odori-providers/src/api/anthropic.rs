@@ -11,8 +11,8 @@
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-    TurnUsage,
+    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    TurnRequest, TurnUsage,
 };
 use serde_json::{Value, json};
 
@@ -31,6 +31,12 @@ pub struct AnthropicConfig {
     pub model: String,
     /// `max_tokens` per model request.
     pub max_tokens: u32,
+    /// Provider-level default thinking budget, applied to turns whose
+    /// agent sets no [`Effort`]. An agent-level effort always wins —
+    /// including [`Effort::None`], which explicitly disables thinking.
+    /// The raw escape hatch for operators who want an exact budget
+    /// instead of the ladder's documented points.
+    pub thinking_budget: Option<u32>,
     /// API origin, overridable for tests and gateways.
     pub base_url: String,
     /// Ceiling on completion-and-tool iterations within one turn.
@@ -42,6 +48,7 @@ impl Default for AnthropicConfig {
         Self {
             model: "claude-opus-5".to_owned(),
             max_tokens: 16_000,
+            thinking_budget: None,
             base_url: "https://api.anthropic.com".to_owned(),
             max_loop_iterations: 16,
         }
@@ -60,6 +67,74 @@ impl AnthropicConfig {
         self.base_url = base_url.into();
         self
     }
+
+    /// Raise or lower the per-request `max_tokens` ceiling. An effort
+    /// level's thinking budget must fit strictly below it.
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Set an exact default thinking budget for turns whose agent sets no
+    /// effort (the raw alternative to the ladder's documented points).
+    /// Agent-level [`Effort`] always overrides it, and [`Effort::None`]
+    /// disables thinking outright. Validated on use: at least 1024 (the
+    /// API's minimum) and strictly below `max_tokens`.
+    pub fn with_thinking_budget(mut self, budget: u32) -> Self {
+        self.thinking_budget = Some(budget);
+        self
+    }
+}
+
+/// Map the neutral effort ladder onto a Messages API extended-thinking
+/// budget. The budgets are Odori's documented mapping (the API takes a
+/// number, not a level): `None` explicitly keeps thinking disabled, and
+/// `Minimal` buys the API's 1024-token minimum. The API requires
+/// `budget_tokens` strictly below `max_tokens`, so an oversized level
+/// fails typed with the remedy instead of a 400 mid-turn.
+fn anthropic_thinking_budget(effort: Effort, max_tokens: u32) -> Result<Option<u32>, TurnError> {
+    let budget = match effort {
+        Effort::None => return Ok(None),
+        Effort::Minimal => 1024,
+        Effort::Low => 2048,
+        Effort::Medium => 4096,
+        Effort::High => 8192,
+        Effort::XHigh => 16_384,
+        Effort::Max => 32_768,
+    };
+    if budget >= max_tokens {
+        return Err(TurnError::Config {
+            message: format!(
+                "effort {effort} maps to a {budget}-token thinking budget, which must stay \
+                 strictly below max_tokens ({max_tokens}); raise \
+                 AnthropicConfig::with_max_tokens or choose a lower effort"
+            ),
+        });
+    }
+    Ok(Some(budget))
+}
+
+/// Validate the raw provider-default thinking budget on use: the API's
+/// 1024 floor and the strictly-below-`max_tokens` ceiling.
+fn validated_thinking_budget(budget: u32, max_tokens: u32) -> Result<u32, TurnError> {
+    if budget < 1024 {
+        return Err(TurnError::Config {
+            message: format!(
+                "AnthropicConfig::thinking_budget is {budget}, below the Messages API's \
+                 1024-token minimum"
+            ),
+        });
+    }
+    if budget >= max_tokens {
+        return Err(TurnError::Config {
+            message: format!(
+                "AnthropicConfig::thinking_budget ({budget}) must stay strictly below \
+                 max_tokens ({max_tokens}); raise AnthropicConfig::with_max_tokens or \
+                 lower the budget"
+            ),
+        });
+    }
+    Ok(budget)
 }
 
 /// The provider.
@@ -135,6 +210,17 @@ impl Provider for AnthropicProvider {
         };
         messages.push(json!({"role": "user", "content": request.input}));
 
+        // Effort validates before the first request leaves the process.
+        // Precedence mirrors model selection: the provider-level default
+        // applies only when the agent sets no effort of its own.
+        let thinking_budget = match request.directives.effort {
+            Some(effort) => anthropic_thinking_budget(effort, self.config.max_tokens)?,
+            None => match self.config.thinking_budget {
+                Some(budget) => Some(validated_thinking_budget(budget, self.config.max_tokens)?),
+                None => None,
+            },
+        };
+
         let mut total_input = 0_u64;
         let mut total_output = 0_u64;
         let started = std::time::Instant::now();
@@ -155,6 +241,9 @@ impl Provider for AnthropicProvider {
                 if let Some(schema) = &request.directives.output_schema {
                     body["output_config"] =
                         json!({"format": {"type": "json_schema", "schema": schema}});
+                }
+                if let Some(budget) = thinking_budget {
+                    body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
                 }
 
                 let exchange = self.stream_once(&key, &body, &events).await?;
@@ -322,6 +411,28 @@ impl AnthropicProvider {
                                 accumulated.push_str(fragment);
                             }
                         }
+                        // Extended-thinking blocks must survive assembly
+                        // verbatim: the tool loop echoes assistant content
+                        // back, and the API rejects a thinking block whose
+                        // text or signature was dropped.
+                        Some("thinking_delta") => {
+                            if let Some(fragment) =
+                                data.pointer("/delta/thinking").and_then(Value::as_str)
+                                && let Some(block) = exchange.content.get_mut(index)
+                            {
+                                let existing = block["thinking"].as_str().unwrap_or_default();
+                                block["thinking"] = json!(format!("{existing}{fragment}"));
+                            }
+                        }
+                        Some("signature_delta") => {
+                            if let Some(fragment) =
+                                data.pointer("/delta/signature").and_then(Value::as_str)
+                                && let Some(block) = exchange.content.get_mut(index)
+                            {
+                                let existing = block["signature"].as_str().unwrap_or_default();
+                                block["signature"] = json!(format!("{existing}{fragment}"));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -382,6 +493,50 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn effort_maps_to_documented_budgets_and_guards_the_ceiling() {
+        assert_eq!(
+            anthropic_thinking_budget(Effort::None, 16_000).expect("explicit none maps"),
+            None,
+            "none keeps thinking disabled"
+        );
+        for (level, budget) in [
+            (Effort::Minimal, 1024),
+            (Effort::Low, 2048),
+            (Effort::Medium, 4096),
+            (Effort::High, 8192),
+            (Effort::XHigh, 16_384),
+            (Effort::Max, 32_768),
+        ] {
+            assert_eq!(
+                anthropic_thinking_budget(level, 64_000).expect("fits below the ceiling"),
+                Some(budget)
+            );
+        }
+        match anthropic_thinking_budget(Effort::XHigh, 16_000) {
+            Err(TurnError::Config { message }) => {
+                assert!(message.contains("16384") && message.contains("with_max_tokens"));
+            }
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_thinking_budgets_validate_floor_and_ceiling() {
+        assert_eq!(
+            validated_thinking_budget(50_000, 64_000).expect("in range"),
+            50_000
+        );
+        match validated_thinking_budget(512, 16_000) {
+            Err(TurnError::Config { message }) => assert!(message.contains("1024")),
+            other => panic!("expected a floor error, got {other:?}"),
+        }
+        match validated_thinking_budget(16_000, 16_000) {
+            Err(TurnError::Config { message }) => assert!(message.contains("with_max_tokens")),
+            other => panic!("expected a ceiling error, got {other:?}"),
+        }
+    }
 
     #[test]
     fn backoff_honors_retry_after_and_caps() {

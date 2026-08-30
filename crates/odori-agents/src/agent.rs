@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::{
     guardrail::{Guardrail, RunBudget},
     handoff::Handoff,
-    provider::{AgentDirectives, TurnTooling},
+    provider::{AgentDirectives, Effort, TurnTooling},
     tool::Tool,
 };
 
@@ -27,6 +27,7 @@ pub struct Agent {
     instructions: String,
     provider: Option<String>,
     model: Option<String>,
+    effort: Option<Effort>,
     tools: Vec<Tool>,
     handoffs: Vec<Handoff>,
     allowed_native_tools: Option<Vec<String>>,
@@ -44,6 +45,7 @@ impl Agent {
             instructions: instructions.into(),
             provider: None,
             model: None,
+            effort: None,
             tools: Vec::new(),
             handoffs: Vec::new(),
             allowed_native_tools: None,
@@ -64,6 +66,15 @@ impl Agent {
     /// Select the backend model, verbatim.
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
+        self
+    }
+
+    /// Select a provider-neutral reasoning effort. Each provider maps the
+    /// level onto its own lever or rejects it before spawn with a typed
+    /// configuration error ([`Effort`]'s contract); unset means the
+    /// backend's default.
+    pub fn with_effort(mut self, effort: Effort) -> Self {
+        self.effort = Some(effort);
         self
     }
 
@@ -158,6 +169,7 @@ impl Agent {
             name: self.name.clone(),
             instructions: self.instructions.clone(),
             model: self.model.clone(),
+            effort: self.effort,
             output_schema: self.output_schema.clone(),
         }
     }
@@ -254,12 +266,14 @@ mod tests {
         registry.register(
             Agent::new("helper", "assist")
                 .with_model("m1")
+                .with_effort(Effort::High)
                 .with_input_guardrail(NoPirates)
                 .with_handoff(Handoff::new("specialist"))
                 .with_allowed_native_tools(["Bash"]),
         );
         let agent = registry.get("helper").expect("registered");
         assert_eq!(agent.directives().model.as_deref(), Some("m1"));
+        assert_eq!(agent.directives().effort, Some(Effort::High));
         assert_eq!(
             agent.tooling().allowed_native_tools,
             Some(vec!["Bash".to_owned()])
