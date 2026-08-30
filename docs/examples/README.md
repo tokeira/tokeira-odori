@@ -10,6 +10,7 @@ the policy and recovery demonstrations deterministic.
 | [slice-fleet](slice-fleet.md) | Typed planning, approvals, scoped durable tools, child workflows, budgets, review, and Raise | None on the scripted path |
 | [rewind](rewind.md) | Retry dedupe, default-cache worker replacement, and divergent timelines | None |
 | [approval-resume](approval-resume.md) | A human approval boundary persisted to disk and resumed in another process | None |
+| [logfire](logfire.md) | The GenAI-convention trace tree (run → turns → tool) exported to Pydantic Logfire | None (needs a Logfire write token) |
 
 All commands below run from the repository root.
 

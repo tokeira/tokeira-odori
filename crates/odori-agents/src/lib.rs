@@ -34,6 +34,7 @@ pub mod output;
 pub mod provider;
 pub mod run;
 pub mod runner;
+pub(crate) mod telemetry;
 pub mod tool;
 
 pub use agent::{Agent, AgentRegistry};
