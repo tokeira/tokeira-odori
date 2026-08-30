@@ -138,6 +138,45 @@ non-retryable configuration errors. Transient network errors, HTTP 429/529, and
 server errors retry with bounded backoff and then surface as retryable
 `TurnError::Api`.
 
+## Reasoning effort
+
+`Agent::with_effort(Effort)` sets a provider-neutral deliberation level:
+`minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — the union of the
+vendor surfaces Odori drives. Unset means the backend's own default.
+Every (provider, level) pair either maps onto that backend's lever or
+fails **before spawn** as a non-retryable `TurnError::Config` naming the
+gap; a level is never silently ignored, clamped, or coerced. Like model
+and guardrail selection, effort is worker-side agent configuration:
+change it under in-flight runs and the same determinism caveat as any
+registry change applies.
+
+| Effort | Claude Code (pinned 2.1.220) | Codex app-server | Anthropic Messages API | OpenAI Responses API |
+| --- | --- | --- | --- | --- |
+| `minimal` | **config error** — the pin has no minimal tier | `model_reasoning_effort = "minimal"` | thinking stays disabled (the API default, made explicit) | `reasoning.effort = "minimal"` |
+| `low` | `--effort low` | `"low"` | thinking budget 1024 | `"low"` |
+| `medium` | `--effort medium` | `"medium"` | thinking budget 4096 | `"medium"` |
+| `high` | `--effort high` | `"high"` | thinking budget 8192 | `"high"` |
+| `xhigh` | `--effort xhigh` | `"xhigh"` | thinking budget 16384 | `"xhigh"` |
+| `max` | `--effort max` | **config error** — Codex tops out at `xhigh` | thinking budget 32768 | **config error** — no such level |
+
+Sources, checked 2026-08-30: the Claude column was verified against the
+pinned 2.1.220 binary's own usage text (`--effort <level>` accepting
+`low, medium, high, xhigh, max`); the Codex column against the Codex
+configuration reference's `model_reasoning_effort` set; the API columns
+against the vendors' request schemas. Within a mapped set, **model**
+support still varies — Codex models and OpenAI's Responses API each
+accept subsets of their ladder (`xhigh` is limited to the codex-max
+line), and such rejections come back from the vendor as non-retryable
+configuration errors rather than being second-guessed in Odori.
+
+The Anthropic budgets are Odori's documented mapping onto the Messages
+API's numeric `thinking.budget_tokens` (the API has no levels). A budget
+must stay strictly below `max_tokens`; a level that does not fit is a
+configuration error naming `AnthropicConfig::with_max_tokens` as the
+remedy. With thinking enabled, streamed thinking blocks are assembled
+verbatim — text and signature — so the internal tool loop's assistant
+echo satisfies the API's thinking contract.
+
 ## Error surfaces
 
 Providers map failures to one public taxonomy:

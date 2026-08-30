@@ -142,6 +142,10 @@ pub struct AgentDirectives {
     /// Backend model selector, verbatim (e.g. a `--model` value). `None`
     /// means the backend's default.
     pub model: Option<String>,
+    /// Provider-neutral reasoning effort. `None` means the backend's
+    /// default; a set level maps per provider ([`Effort`]'s contract).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
     /// JSON Schema the final result must satisfy, where the backend can
     /// enforce it (headless Claude Code: `--json-schema`). Typed-output
     /// parsing happens runner-side either way.
@@ -155,8 +159,60 @@ impl AgentDirectives {
             name: name.into(),
             instructions: instructions.into(),
             model: None,
+            effort: None,
             output_schema: None,
         }
+    }
+}
+
+/// Provider-neutral reasoning effort: how much deliberation a turn buys.
+///
+/// The ladder is the union of the vendor surfaces Odori drives, so no
+/// provider can express a level the seam cannot carry. Every
+/// (provider, level) pair either maps to that backend's own lever or
+/// fails **before spawn** with a typed [`TurnError::Config`] naming the
+/// gap — a level is never silently ignored, clamped, or coerced. The
+/// per-provider mapping table lives in `docs/providers.md`.
+///
+/// The enum is deliberately exhaustive (no `non_exhaustive`): adding a
+/// level is a breaking change that forces every provider mapping to be
+/// revisited in the same release, which is the repository's
+/// all-providers-in-one-PR rule made structural.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    /// The floor: as little deliberation as the backend can be asked for.
+    Minimal,
+    /// Light deliberation.
+    Low,
+    /// The common middle setting.
+    Medium,
+    /// Heavy deliberation.
+    High,
+    /// The highest tier shared by more than one backend.
+    XHigh,
+    /// The absolute ceiling where a backend has one beyond `XHigh`.
+    Max,
+}
+
+impl Effort {
+    /// The lowercase wire form (`"xhigh"`), identical to the serde
+    /// representation.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Effort::Minimal => "minimal",
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+}
+
+impl fmt::Display for Effort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -582,24 +638,44 @@ mod tests {
 
     #[test]
     fn turn_request_round_trips_through_serde() {
+        let mut directives = AgentDirectives::new("a", "be helpful");
+        directives.effort = Some(Effort::XHigh);
         let request = TurnRequest::new(
             TurnIdentity {
                 run_id: "r".into(),
                 turn: 3,
                 attempt: 2,
             },
-            AgentDirectives::new("a", "be helpful"),
+            directives,
             "hello",
             SessionDirective::ResumeForked {
                 session_id: "s0".into(),
             },
         );
         let json = serde_json::to_string(&request).expect("serialize");
+        assert!(json.contains("\"effort\":\"xhigh\""), "{json}");
         let back: TurnRequest = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.identity.turn, 3);
+        assert_eq!(back.directives.effort, Some(Effort::XHigh));
         assert!(matches!(
             back.session,
             SessionDirective::ResumeForked { .. }
         ));
+    }
+
+    #[test]
+    fn directives_without_effort_deserialize_to_the_backend_default() {
+        // The pre-effort wire shape: absent means None, and None
+        // serializes to nothing, so old and new peers interoperate.
+        let directives: AgentDirectives = serde_json::from_value(serde_json::json!({
+            "name": "a",
+            "instructions": "i",
+            "model": null,
+            "output_schema": null
+        }))
+        .expect("old directive shape");
+        assert_eq!(directives.effort, None);
+        let json = serde_json::to_string(&directives).expect("serialize");
+        assert!(!json.contains("effort"), "{json}");
     }
 }

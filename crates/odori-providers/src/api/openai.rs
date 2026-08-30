@@ -12,8 +12,8 @@
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-    TurnUsage,
+    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    TurnRequest, TurnUsage,
 };
 use serde_json::{Value, json};
 
@@ -132,6 +132,8 @@ impl Provider for OpenAiProvider {
         };
 
         let mut input: Value = json!(request.input);
+        // Effort validates before the first request leaves the process.
+        let reasoning_effort = request.directives.effort.map(openai_effort).transpose()?;
         let mut total_input = 0_u64;
         let mut total_output = 0_u64;
         let started = std::time::Instant::now();
@@ -148,6 +150,9 @@ impl Provider for OpenAiProvider {
             }
             if let Some(previous) = &previous_response_id {
                 body["previous_response_id"] = json!(previous);
+            }
+            if let Some(effort) = reasoning_effort {
+                body["reasoning"] = json!({"effort": effort});
             }
             if !tool_defs.is_empty() {
                 body["tools"] = json!(tool_defs);
@@ -336,5 +341,46 @@ fn classify_status(
         _ => TurnError::Api {
             message: format!("OpenAI API failure ({status}) after retries: {head}"),
         },
+    }
+}
+
+/// Map the neutral effort ladder onto Responses `reasoning.effort`. The
+/// levels `minimal` through `xhigh` pass verbatim — which of them a given
+/// model accepts is the API's per-model contract, and a rejection comes
+/// back as a typed configuration error through [`classify_status`]. `max`
+/// exists on no OpenAI surface, so it fails typed before any request.
+fn openai_effort(effort: Effort) -> Result<&'static str, TurnError> {
+    match effort {
+        Effort::Minimal | Effort::Low | Effort::Medium | Effort::High | Effort::XHigh => {
+            Ok(effort.as_str())
+        }
+        Effort::Max => Err(TurnError::Config {
+            message: "the OpenAI Responses API has no `max` reasoning effort; its ladder \
+                      tops out at xhigh (model-dependent) — configure the agent with \
+                      Effort::XHigh or leave effort unset for the model default"
+                .to_owned(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effort_passes_the_ladder_verbatim_and_rejects_max_typed() {
+        for (level, wire) in [
+            (Effort::Minimal, "minimal"),
+            (Effort::Low, "low"),
+            (Effort::Medium, "medium"),
+            (Effort::High, "high"),
+            (Effort::XHigh, "xhigh"),
+        ] {
+            assert_eq!(openai_effort(level).expect("level passes"), wire);
+        }
+        match openai_effort(Effort::Max) {
+            Err(TurnError::Config { message }) => assert!(message.contains("xhigh")),
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
     }
 }

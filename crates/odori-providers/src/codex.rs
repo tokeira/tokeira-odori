@@ -24,8 +24,8 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    McpTransport, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
-    TurnRequest, TurnTooling, TurnUsage,
+    Effort, McpTransport, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink,
+    TurnOutcome, TurnRequest, TurnTooling, TurnUsage,
 };
 use serde_json::{Map, Value, json};
 use tokio::{
@@ -138,6 +138,9 @@ async fn run_app_server(
     request: TurnRequest,
     events: TurnEventSink,
 ) -> Result<TurnOutcome, TurnError> {
+    // Effort validates before any process spawns: an unmappable level is a
+    // configuration error, never a mid-session protocol failure.
+    let effort = request.directives.effort.map(codex_effort).transpose()?;
     let tooling = render_tooling(&request.tooling)?;
     let mut process = AppServerProcess::spawn(&provider.command, &tooling.env).await?;
 
@@ -180,6 +183,11 @@ async fn run_app_server(
     });
     if let Some(model) = &request.directives.model {
         session_params["model"] = json!(model);
+    }
+    if let Some(effort) = effort {
+        // A thread-config override, exactly as `model_reasoning_effort`
+        // appears in Codex's own configuration surface.
+        session_params["config"]["model_reasoning_effort"] = json!(effort);
     }
 
     let (session_method, phase) = match &request.session {
@@ -317,6 +325,25 @@ async fn run_app_server(
 struct RenderedTooling {
     config: Map<String, Value>,
     env: Vec<(String, String)>,
+}
+
+/// Map the neutral effort ladder onto Codex's `model_reasoning_effort`
+/// configuration value. The accepted set per the Codex configuration
+/// reference (checked 2026-08-30): `minimal`, `low`, `medium`, `high`,
+/// `xhigh` — model support within that set is Codex's own concern.
+/// `max` exists on no Codex surface, so it fails typed before spawn.
+fn codex_effort(effort: Effort) -> Result<&'static str, TurnError> {
+    match effort {
+        Effort::Minimal | Effort::Low | Effort::Medium | Effort::High | Effort::XHigh => {
+            Ok(effort.as_str())
+        }
+        Effort::Max => Err(TurnError::Config {
+            message: "Codex's model_reasoning_effort tops out at xhigh; there is no `max` \
+                      tier — configure the agent with Effort::XHigh or leave effort unset \
+                      for the model default"
+                .to_owned(),
+        }),
+    }
 }
 
 fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
@@ -861,5 +888,22 @@ mod tests {
         assert!(message.contains("codex login"));
         assert!(message.contains(EXPECTED_CODEX_CLI_VERSION));
         assert!(message.contains("https://learn.chatgpt.com/docs/codex/cli#getting-started"));
+    }
+
+    #[test]
+    fn effort_maps_onto_the_codex_configuration_set_or_fails_typed() {
+        for (level, wire) in [
+            (Effort::Minimal, "minimal"),
+            (Effort::Low, "low"),
+            (Effort::Medium, "medium"),
+            (Effort::High, "high"),
+            (Effort::XHigh, "xhigh"),
+        ] {
+            assert_eq!(codex_effort(level).expect("codex accepts the level"), wire);
+        }
+        match codex_effort(Effort::Max) {
+            Err(TurnError::Config { message }) => assert!(message.contains("xhigh")),
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
     }
 }

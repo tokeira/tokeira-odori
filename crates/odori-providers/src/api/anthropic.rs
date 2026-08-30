@@ -11,8 +11,8 @@
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-    TurnUsage,
+    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    TurnRequest, TurnUsage,
 };
 use serde_json::{Value, json};
 
@@ -60,6 +60,40 @@ impl AnthropicConfig {
         self.base_url = base_url.into();
         self
     }
+
+    /// Raise or lower the per-request `max_tokens` ceiling. An effort
+    /// level's thinking budget must fit strictly below it.
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+}
+
+/// Map the neutral effort ladder onto a Messages API extended-thinking
+/// budget. The budgets are Odori's documented mapping (the API takes a
+/// number, not a level); `Minimal` explicitly keeps thinking disabled —
+/// the API's own default. The API requires `budget_tokens` strictly below
+/// `max_tokens`, so an oversized level fails typed with the remedy
+/// instead of a 400 mid-turn.
+fn anthropic_thinking_budget(effort: Effort, max_tokens: u32) -> Result<Option<u32>, TurnError> {
+    let budget = match effort {
+        Effort::Minimal => return Ok(None),
+        Effort::Low => 1024,
+        Effort::Medium => 4096,
+        Effort::High => 8192,
+        Effort::XHigh => 16_384,
+        Effort::Max => 32_768,
+    };
+    if budget >= max_tokens {
+        return Err(TurnError::Config {
+            message: format!(
+                "effort {effort} maps to a {budget}-token thinking budget, which must stay \
+                 strictly below max_tokens ({max_tokens}); raise \
+                 AnthropicConfig::with_max_tokens or choose a lower effort"
+            ),
+        });
+    }
+    Ok(Some(budget))
 }
 
 /// The provider.
@@ -135,6 +169,12 @@ impl Provider for AnthropicProvider {
         };
         messages.push(json!({"role": "user", "content": request.input}));
 
+        // Effort validates before the first request leaves the process.
+        let thinking_budget = match request.directives.effort {
+            Some(effort) => anthropic_thinking_budget(effort, self.config.max_tokens)?,
+            None => None,
+        };
+
         let mut total_input = 0_u64;
         let mut total_output = 0_u64;
         let started = std::time::Instant::now();
@@ -155,6 +195,9 @@ impl Provider for AnthropicProvider {
                 if let Some(schema) = &request.directives.output_schema {
                     body["output_config"] =
                         json!({"format": {"type": "json_schema", "schema": schema}});
+                }
+                if let Some(budget) = thinking_budget {
+                    body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
                 }
 
                 let exchange = self.stream_once(&key, &body, &events).await?;
@@ -322,6 +365,28 @@ impl AnthropicProvider {
                                 accumulated.push_str(fragment);
                             }
                         }
+                        // Extended-thinking blocks must survive assembly
+                        // verbatim: the tool loop echoes assistant content
+                        // back, and the API rejects a thinking block whose
+                        // text or signature was dropped.
+                        Some("thinking_delta") => {
+                            if let Some(fragment) =
+                                data.pointer("/delta/thinking").and_then(Value::as_str)
+                                && let Some(block) = exchange.content.get_mut(index)
+                            {
+                                let existing = block["thinking"].as_str().unwrap_or_default();
+                                block["thinking"] = json!(format!("{existing}{fragment}"));
+                            }
+                        }
+                        Some("signature_delta") => {
+                            if let Some(fragment) =
+                                data.pointer("/delta/signature").and_then(Value::as_str)
+                                && let Some(block) = exchange.content.get_mut(index)
+                            {
+                                let existing = block["signature"].as_str().unwrap_or_default();
+                                block["signature"] = json!(format!("{existing}{fragment}"));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -382,6 +447,33 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn effort_maps_to_documented_budgets_and_guards_the_ceiling() {
+        assert_eq!(
+            anthropic_thinking_budget(Effort::Minimal, 16_000).expect("floor maps"),
+            None,
+            "minimal keeps thinking disabled"
+        );
+        for (level, budget) in [
+            (Effort::Low, 1024),
+            (Effort::Medium, 4096),
+            (Effort::High, 8192),
+            (Effort::XHigh, 16_384),
+            (Effort::Max, 32_768),
+        ] {
+            assert_eq!(
+                anthropic_thinking_budget(level, 64_000).expect("fits below the ceiling"),
+                Some(budget)
+            );
+        }
+        match anthropic_thinking_budget(Effort::XHigh, 16_000) {
+            Err(TurnError::Config { message }) => {
+                assert!(message.contains("16384") && message.contains("with_max_tokens"));
+            }
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
+    }
 
     #[test]
     fn backoff_honors_retry_after_and_caps() {

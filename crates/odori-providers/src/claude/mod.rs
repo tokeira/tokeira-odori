@@ -32,8 +32,8 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-    TurnUsage,
+    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    TurnRequest, TurnUsage,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
@@ -175,7 +175,7 @@ impl ClaudeProvider {
             .map(String::as_str)
     }
 
-    fn build_command(&self, request: &TurnRequest) -> Command {
+    fn build_command(&self, request: &TurnRequest) -> Result<Command, TurnError> {
         let mut cmd = Command::new(&self.config.binary);
         match &request.session {
             SessionDirective::Start => {}
@@ -196,6 +196,9 @@ impl ClaudeProvider {
         if let Some(model) = &request.directives.model {
             cmd.arg("--model").arg(model);
         }
+        if let Some(effort) = request.directives.effort {
+            cmd.arg("--effort").arg(claude_effort(effort)?);
+        }
         if let Some(schema) = &request.directives.output_schema {
             cmd.arg("--json-schema").arg(schema.to_string());
         }
@@ -214,7 +217,28 @@ impl ClaudeProvider {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        cmd
+        Ok(cmd)
+    }
+}
+
+/// Map the neutral effort ladder onto `--effort` as the pinned harness
+/// accepts it. Verified against the 2.1.220 binary's own usage text
+/// (2026-08-30): `low`, `medium`, `high`, `xhigh`, `max` — the pin has no
+/// minimal tier, and a level the harness would reject is a configuration
+/// error **before** any process spawns, never a misclassified harness
+/// death.
+fn claude_effort(effort: Effort) -> Result<&'static str, TurnError> {
+    match effort {
+        Effort::Minimal => Err(TurnError::Config {
+            message: format!(
+                "the Claude Code harness (pinned {PINNED_VERSION}) has no `minimal` effort \
+                 tier; its `--effort` accepts low, medium, high, xhigh, or max — configure \
+                 the agent with Effort::Low or leave effort unset for the harness default"
+            ),
+        }),
+        Effort::Low | Effort::Medium | Effort::High | Effort::XHigh | Effort::Max => {
+            Ok(effort.as_str())
+        }
     }
 }
 
@@ -240,7 +264,7 @@ impl Provider for ClaudeProvider {
         let started = Instant::now();
 
         let mut child = self
-            .build_command(&request)
+            .build_command(&request)?
             .spawn()
             .map_err(|error| missing_harness(&self.config.binary, &error))?;
         let stdout = child
@@ -537,6 +561,72 @@ mod tests {
     }
 
     #[test]
+    fn effort_levels_render_to_the_pinned_flag_or_fail_typed() {
+        let provider = ClaudeProvider::new();
+        let mut directives = AgentDirectives::new("a", "i");
+        directives.effort = Some(Effort::XHigh);
+        let request = TurnRequest::new(
+            TurnIdentity {
+                run_id: "r".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            directives,
+            "hello",
+            SessionDirective::Start,
+        );
+        let cmd = provider.build_command(&request).expect("supported level");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let flag = args
+            .iter()
+            .position(|arg| arg == "--effort")
+            .expect("--effort rendered");
+        assert_eq!(args[flag + 1], "xhigh");
+
+        // The pin has no minimal tier: a typed configuration error before
+        // any spawn, naming the supported levels.
+        let mut minimal = TurnRequest::new(
+            TurnIdentity {
+                run_id: "r".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            AgentDirectives::new("a", "i"),
+            "hello",
+            SessionDirective::Start,
+        );
+        minimal.directives.effort = Some(Effort::Minimal);
+        match provider.build_command(&minimal) {
+            Err(TurnError::Config { message }) => {
+                assert!(message.contains("minimal") && message.contains(PINNED_VERSION));
+            }
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
+
+        // Unset effort renders no flag at all.
+        let unset = TurnRequest::new(
+            TurnIdentity {
+                run_id: "r".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            AgentDirectives::new("a", "i"),
+            "hello",
+            SessionDirective::Start,
+        );
+        let cmd = provider.build_command(&unset).expect("no effort set");
+        assert!(
+            !cmd.as_std()
+                .get_args()
+                .any(|arg| arg.to_string_lossy() == "--effort")
+        );
+    }
+
+    #[test]
     fn vendor_transport_env_is_scrubbed_at_spawn() {
         let provider = ClaudeProvider::new();
         let request = TurnRequest::new(
@@ -549,7 +639,9 @@ mod tests {
             "hello",
             SessionDirective::Start,
         );
-        let cmd = provider.build_command(&request);
+        let cmd = provider
+            .build_command(&request)
+            .expect("default request builds");
         let removed: Vec<&str> = cmd
             .as_std()
             .get_envs()

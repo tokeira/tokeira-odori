@@ -270,7 +270,7 @@ mod bridge_support {
 #[cfg(feature = "api-anthropic")]
 mod anthropic {
     use super::*;
-    use odori_agents::provider::{Provider, TurnError};
+    use odori_agents::provider::{Effort, Provider, TurnError};
     use odori_providers::{AnthropicConfig, AnthropicProvider};
 
     fn provider(base_url: &str) -> AnthropicProvider {
@@ -315,6 +315,7 @@ mod anthropic {
         let (events, mut receiver) = sink();
         let mut req = request("say hello", SessionDirective::Start);
         req.directives.output_schema = Some(json!({"type": "object"}));
+        req.directives.effort = Some(Effort::High);
         let outcome = provider.execute_turn(req, events).await.expect("turn");
 
         assert_eq!(outcome.text, "Hello from the mock");
@@ -328,6 +329,11 @@ mod anthropic {
         assert_eq!(path, "/v1/messages");
         assert_eq!(body["model"], "claude-opus-5");
         assert_eq!(body["system"], "answer plainly");
+        assert_eq!(
+            body["thinking"],
+            json!({"type": "enabled", "budget_tokens": 8192}),
+            "effort high maps to the documented thinking budget"
+        );
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"], "say hello");
         assert_eq!(body["stream"], true);
@@ -497,6 +503,99 @@ mod anthropic {
     }
 
     #[tokio::test]
+    async fn thinking_blocks_survive_assembly_for_the_tool_loop() {
+        let (recording, attachment) = bridge_support::bridge_attachment().await;
+        let mock = MockApi::start(vec![
+            Scripted::Sse(vec![
+                (
+                    "message_start".into(),
+                    json!({"type": "message_start", "message": {"usage": {"input_tokens": 9}}}),
+                ),
+                (
+                    "content_block_start".into(),
+                    json!({"type": "content_block_start", "index": 0,
+                           "content_block": {"type": "thinking", "thinking": ""}}),
+                ),
+                (
+                    "content_block_delta".into(),
+                    json!({"type": "content_block_delta", "index": 0,
+                           "delta": {"type": "thinking_delta", "thinking": "weighing the "}}),
+                ),
+                (
+                    "content_block_delta".into(),
+                    json!({"type": "content_block_delta", "index": 0,
+                           "delta": {"type": "thinking_delta", "thinking": "deploy target"}}),
+                ),
+                (
+                    "content_block_delta".into(),
+                    json!({"type": "content_block_delta", "index": 0,
+                           "delta": {"type": "signature_delta", "signature": "sig-abc123"}}),
+                ),
+                (
+                    "content_block_stop".into(),
+                    json!({"type": "content_block_stop", "index": 0}),
+                ),
+                (
+                    "content_block_start".into(),
+                    json!({"type": "content_block_start", "index": 1,
+                           "content_block": {"type": "tool_use", "id": "toolu_think1",
+                                             "name": "deploy", "input": {}}}),
+                ),
+                (
+                    "content_block_delta".into(),
+                    json!({"type": "content_block_delta", "index": 1,
+                           "delta": {"type": "input_json_delta",
+                                     "partial_json": "{\"target\":\"prod\"}"}}),
+                ),
+                (
+                    "content_block_stop".into(),
+                    json!({"type": "content_block_stop", "index": 1}),
+                ),
+                (
+                    "message_delta".into(),
+                    json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"},
+                           "usage": {"output_tokens": 3}}),
+                ),
+            ]),
+            text_exchange("thought and deployed", "end_turn"),
+        ])
+        .await;
+        let provider = provider(&mock.url());
+        let (events, _receiver) = sink();
+        let mut req = request("deploy prod thoughtfully", SessionDirective::Start);
+        req.directives.effort = Some(Effort::Medium);
+        req.tooling.mcp_servers.push(attachment.mcp_server);
+        req.tooling.framework_tools = vec!["deploy".to_owned()];
+
+        let outcome = provider.execute_turn(req, events).await.expect("tool turn");
+        assert_eq!(outcome.text, "thought and deployed");
+        assert_eq!(
+            recording.calls.lock().expect("lock").clone(),
+            vec![("deploy".to_owned(), "toolu_think1".to_owned())]
+        );
+
+        // The second request's echoed assistant turn carries the thinking
+        // block assembled exactly — text and signature — as the API
+        // requires for a thinking-enabled tool loop.
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 2);
+        for body in [&requests[0].1, &requests[1].1] {
+            assert_eq!(
+                body["thinking"],
+                json!({"type": "enabled", "budget_tokens": 4096})
+            );
+        }
+        let echoed = &requests[1].1["messages"][1];
+        assert_eq!(echoed["role"], "assistant");
+        assert_eq!(
+            echoed["content"][0],
+            json!({"type": "thinking", "thinking": "weighing the deploy target",
+                   "signature": "sig-abc123"})
+        );
+        assert_eq!(echoed["content"][1]["type"], "tool_use");
+    }
+
+    #[tokio::test]
     async fn missing_key_and_toolless_misconfigurations_speak_clearly() {
         clear_key("ANTHROPIC_API_KEY");
         let provider =
@@ -543,7 +642,7 @@ mod anthropic {
 #[cfg(feature = "api-openai")]
 mod openai {
     use super::*;
-    use odori_agents::provider::{Provider, TurnError};
+    use odori_agents::provider::{Effort, Provider, TurnError};
     use odori_providers::{OpenAiConfig, OpenAiProvider};
 
     fn provider(base_url: &str) -> OpenAiProvider {
@@ -581,6 +680,7 @@ mod openai {
             },
         );
         req.directives.output_schema = Some(json!({"type": "object"}));
+        req.directives.effort = Some(Effort::Minimal);
         let outcome = provider.execute_turn(req, events).await.expect("turn");
 
         assert_eq!(outcome.text, "chained answer");
@@ -592,6 +692,11 @@ mod openai {
         assert_eq!(path, "/v1/responses");
         assert_eq!(body["model"], "gpt-5.6");
         assert_eq!(body["previous_response_id"], "resp_0");
+        assert_eq!(
+            body["reasoning"],
+            json!({"effort": "minimal"}),
+            "effort passes to reasoning.effort verbatim"
+        );
         assert_eq!(body["instructions"], "answer plainly");
         assert_eq!(body["input"], "continue");
         assert_eq!(body["text"]["format"]["type"], "json_schema");
