@@ -32,8 +32,8 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
-    TurnRequest, TurnUsage,
+    Effort, Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent, TurnEventSink,
+    TurnOutcome, TurnRequest, TurnUsage,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
@@ -42,7 +42,7 @@ use tokio::{
 };
 
 use crate::claude_flags::render_tooling;
-use events::{ContentBlock, ResultEvent, StreamEvent, UserBlock};
+use events::{ContentBlock, RateLimitInfo, ResultEvent, StreamEvent, UserBlock};
 
 /// The Claude Code version this provider is conformance-tested against.
 pub const PINNED_VERSION: &str = "2.1.220";
@@ -343,6 +343,14 @@ impl Provider for ClaudeProvider {
                     events.report_usage(result_usage(&result));
                     terminal = Some(result);
                 }
+                StreamEvent::RateLimit(event) => {
+                    if let Some(info) = event.rate_limit_info {
+                        let limit = limit_status(info);
+                        if !limit.is_empty() {
+                            events.emit(TurnEvent::LimitObserved { limit });
+                        }
+                    }
+                }
                 StreamEvent::Other(_) => {}
             }
         };
@@ -459,12 +467,31 @@ fn classify(
 }
 
 fn result_usage(result: &ResultEvent) -> TurnUsage {
+    let detail = result.usage.as_ref();
     let mut usage = TurnUsage::default();
     usage.total_cost_usd = result.total_cost_usd;
-    usage.input_tokens = result.usage.as_ref().and_then(|value| value.input_tokens);
-    usage.output_tokens = result.usage.as_ref().and_then(|value| value.output_tokens);
+    usage.input_tokens = detail.and_then(|value| value.input_tokens);
+    usage.output_tokens = detail.and_then(|value| value.output_tokens);
+    usage.cached_input_tokens = detail.and_then(|value| value.cache_read_input_tokens);
+    usage.cache_creation_input_tokens = detail.and_then(|value| value.cache_creation_input_tokens);
+    // Absent at the 2.1.220 pin; reported by 2.1.237+ (drift-tolerant).
+    usage.reasoning_output_tokens = detail
+        .and_then(|value| value.output_tokens_details.as_ref())
+        .and_then(|details| details.thinking_tokens);
     usage.duration = result.duration_ms.map(Duration::from_millis);
     usage
+}
+
+/// Map the pin's `rate_limit_info` onto the seam's sparse limit shape.
+fn limit_status(info: RateLimitInfo) -> ProviderLimitStatus {
+    let mut limit = ProviderLimitStatus::default();
+    limit.status = info.status;
+    limit.kind = info.rate_limit_type;
+    limit.resets_at_epoch_seconds = info.resets_at;
+    limit.using_overage = info.is_using_overage;
+    limit.overage_status = info.overage_status;
+    limit.overage_resets_at_epoch_seconds = info.overage_resets_at;
+    limit
 }
 
 /// The operator-empathy error for a missing or unspawnable harness.

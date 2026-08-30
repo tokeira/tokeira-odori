@@ -164,8 +164,15 @@ async fn write_response(stream: &mut tokio::net::TcpStream, response: Scripted) 
             for (event, data) in frames {
                 body.push_str(&format!("event: {event}\ndata: {data}\n\n"));
             }
+            // Both vendors stamp remaining-quota headers on every
+            // response; each provider reads only its own names.
             format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{body}",
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+                 anthropic-ratelimit-requests-remaining: 49\r\n\
+                 anthropic-ratelimit-tokens-remaining: 39000\r\n\
+                 x-ratelimit-remaining-requests: 4999\r\n\
+                 x-ratelimit-remaining-tokens: 449000\r\n\
+                 content-length: {}\r\n\r\n{body}",
                 body.len()
             )
         }
@@ -283,7 +290,9 @@ mod anthropic {
             (
                 "message_start".into(),
                 json!({"type": "message_start",
-                       "message": {"usage": {"input_tokens": 11}}}),
+                       "message": {"usage": {"input_tokens": 11,
+                                             "cache_read_input_tokens": 100,
+                                             "cache_creation_input_tokens": 40}}}),
             ),
             (
                 "content_block_start".into(),
@@ -321,6 +330,12 @@ mod anthropic {
         assert_eq!(outcome.text, "Hello from the mock");
         assert_eq!(outcome.usage.input_tokens, Some(11));
         assert_eq!(outcome.usage.output_tokens, Some(5));
+        assert_eq!(outcome.usage.cached_input_tokens, Some(100));
+        assert_eq!(outcome.usage.cache_creation_input_tokens, Some(40));
+        assert_eq!(
+            outcome.usage.reasoning_output_tokens, None,
+            "the Messages API reports no distinct reasoning figure"
+        );
         assert!(outcome.session_id.starts_with("anthropic-"));
 
         let requests = mock.requests();
@@ -349,7 +364,23 @@ mod anthropic {
                 .iter()
                 .any(|(name, value)| name == "anthropic-version" && value == "2023-06-01")
         );
-        assert!(receiver.try_recv().is_ok(), "streaming emitted heartbeats");
+        let mut limits = Vec::new();
+        let mut saw_liveness = false;
+        while let Ok(event) = receiver.try_recv() {
+            match event {
+                TurnEvent::LimitObserved { limit } => limits.push(limit),
+                TurnEvent::Liveness => saw_liveness = true,
+                _ => {}
+            }
+        }
+        assert!(saw_liveness, "streaming emitted heartbeats");
+        assert!(
+            limits
+                .iter()
+                .any(|limit| limit.remaining_requests == Some(49)
+                    && limit.remaining_tokens == Some(39_000)),
+            "response headers must surface as LimitObserved: {limits:?}"
+        );
     }
 
     #[tokio::test]
@@ -701,7 +732,9 @@ mod openai {
                 "response.completed".into(),
                 json!({"type": "response.completed",
                        "response": {"id": id, "output": output,
-                                    "usage": {"input_tokens": 13, "output_tokens": 4}}}),
+                                    "usage": {"input_tokens": 13, "output_tokens": 4,
+                                              "input_tokens_details": {"cached_tokens": 7},
+                                              "output_tokens_details": {"reasoning_tokens": 2}}}}),
             ),
         ])
     }
@@ -710,7 +743,7 @@ mod openai {
     async fn request_shape_chaining_and_typed_output() {
         let mock = MockApi::start(vec![completed("resp_1", "chained answer", Vec::new())]).await;
         let provider = provider(&mock.url());
-        let (events, _r) = sink();
+        let (events, mut receiver) = sink();
         let mut req = request(
             "continue",
             SessionDirective::Resume {
@@ -724,6 +757,20 @@ mod openai {
         assert_eq!(outcome.text, "chained answer");
         assert_eq!(outcome.session_id, "resp_1", "session is the response id");
         assert_eq!(outcome.usage.input_tokens, Some(13));
+        assert_eq!(outcome.usage.cached_input_tokens, Some(7));
+        assert_eq!(outcome.usage.reasoning_output_tokens, Some(2));
+        assert_eq!(
+            outcome.usage.cache_creation_input_tokens, None,
+            "the Responses API has no cache-write figure"
+        );
+        let mut saw_limit = false;
+        while let Ok(event) = receiver.try_recv() {
+            if let TurnEvent::LimitObserved { limit } = event {
+                saw_limit = limit.remaining_requests == Some(4_999)
+                    && limit.remaining_tokens == Some(449_000);
+            }
+        }
+        assert!(saw_limit, "response headers must surface as LimitObserved");
 
         let requests = mock.requests();
         let (path, body, headers) = &requests[0];

@@ -13,6 +13,8 @@ Use these guides after the root [quickstart](../README.md#quickstart).
   spend enforcement and child workflows.
 - [Observability](observability.md) covers the GenAI-convention trace
   tree, the host-owned exporter model, redaction, and Pydantic Logfire.
+- [Usage and credits](usage-and-credits.md) covers the typed accounting
+  surface, per-provider limit/credit signals, and the capability matrix.
 - [Aurora DSQL clusters](dsql-clusters.md) covers managed creation,
   operator-owned adoption, descriptors, IAM requirements, and teardown.
 - [Examples](examples/README.md) maps each executable example to the behavior

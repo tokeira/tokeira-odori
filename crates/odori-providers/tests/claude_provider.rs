@@ -71,6 +71,12 @@ async fn echo_turn_captures_result_session_usage_and_events() {
     assert_eq!(outcome.usage.total_cost_usd, Some(0.02));
     assert_eq!(outcome.usage.input_tokens, Some(7));
     assert_eq!(outcome.usage.output_tokens, Some(3));
+    assert_eq!(outcome.usage.cached_input_tokens, Some(22_694));
+    assert_eq!(outcome.usage.cache_creation_input_tokens, Some(12_529));
+    assert_eq!(
+        outcome.usage.reasoning_output_tokens, None,
+        "the pin reports no thinking-token detail"
+    );
     assert_eq!(outcome.usage.duration, Some(Duration::from_millis(40)));
     assert_eq!(provider.detected_version(), Some(PINNED_VERSION));
 
@@ -86,6 +92,17 @@ async fn echo_turn_captures_result_session_usage_and_events() {
         events
             .iter()
             .any(|event| matches!(event, TurnEvent::Liveness))
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            TurnEvent::LimitObserved { limit }
+                if limit.kind.as_deref() == Some("five_hour")
+                    && limit.status.as_deref() == Some("allowed")
+                    && limit.resets_at_epoch_seconds == Some(1_788_118_800)
+                    && limit.using_overage == Some(false)
+        )),
+        "rate_limit_event must surface as LimitObserved: {events:?}"
     );
 }
 

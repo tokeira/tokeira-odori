@@ -24,8 +24,8 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Effort, McpTransport, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink,
-    TurnOutcome, TurnRequest, TurnTooling, TurnUsage,
+    Effort, McpTransport, Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent,
+    TurnEventSink, TurnOutcome, TurnRequest, TurnTooling, TurnUsage,
 };
 use serde_json::{Map, Value, json};
 use tokio::{
@@ -280,13 +280,23 @@ async fn run_app_server(
         if method == Some("thread/tokenUsage/updated")
             && message.pointer("/params/turnId").and_then(Value::as_str) == Some(&turn_id)
         {
-            usage.input_tokens = message
-                .pointer("/params/tokenUsage/last/inputTokens")
-                .and_then(Value::as_u64);
-            usage.output_tokens = message
-                .pointer("/params/tokenUsage/last/outputTokens")
-                .and_then(Value::as_u64);
+            let last = |field: &str| {
+                message
+                    .pointer(&format!("/params/tokenUsage/last/{field}"))
+                    .and_then(Value::as_u64)
+            };
+            usage.input_tokens = last("inputTokens");
+            usage.output_tokens = last("outputTokens");
+            usage.cached_input_tokens = last("cachedInputTokens");
+            usage.cache_creation_input_tokens = last("cacheWriteInputTokens");
+            usage.reasoning_output_tokens = last("reasoningOutputTokens");
             events.report_usage(usage.clone());
+        }
+        if method == Some("account/rateLimits/updated") {
+            let limit = rate_limit_status(&message);
+            if !limit.is_empty() {
+                events.emit(TurnEvent::LimitObserved { limit });
+            }
         }
         if method == Some("turn/completed")
             && message.pointer("/params/turn/id").and_then(Value::as_str) == Some(&turn_id)
@@ -325,6 +335,31 @@ async fn run_app_server(
 struct RenderedTooling {
     config: Map<String, Value>,
     env: Vec<(String, String)>,
+}
+
+/// Map an `account/rateLimits/updated` notification onto the seam's
+/// sparse limit shape. Payload observed against codex-cli 0.149.0
+/// (2026-08-30): `rateLimits.{primary:{usedPercent, windowDurationMins,
+/// resetsAt}, credits:{hasCredits, unlimited, balance}, planType,
+/// rateLimitReachedType}`; absent fields stay `None`.
+fn rate_limit_status(message: &Value) -> ProviderLimitStatus {
+    let limits = message.pointer("/params/rateLimits");
+    let field = |path: &str| limits.and_then(|value| value.pointer(path));
+    let mut limit = ProviderLimitStatus::default();
+    limit.status = field("/rateLimitReachedType")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    limit.used_percent = field("/primary/usedPercent").and_then(Value::as_f64);
+    limit.window_minutes = field("/primary/windowDurationMins").and_then(Value::as_u64);
+    limit.resets_at_epoch_seconds = field("/primary/resetsAt").and_then(Value::as_u64);
+    limit.credits_balance = field("/credits/balance")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    limit.credits_unlimited = field("/credits/unlimited").and_then(Value::as_bool);
+    limit.plan = field("/planType")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    limit
 }
 
 /// Map the neutral effort ladder onto Codex's `model_reasoning_effort`

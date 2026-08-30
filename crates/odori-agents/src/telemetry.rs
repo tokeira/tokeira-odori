@@ -531,6 +531,7 @@ mod tests {
                 session_id: "session-0".to_owned(),
                 text: "redacted by never being recorded".to_owned(),
                 usage,
+                limit: None,
             };
             record_turn_success(&turn, &outcome);
 

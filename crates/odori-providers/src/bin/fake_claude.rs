@@ -178,11 +178,18 @@ fn main() {
             let text = format!("echo: {prompt} [{}]", markers.join(" "));
             emit(&json!({"type": "assistant", "message": {"content": [
                 {"type": "text", "text": text}]}}));
+            // Emitted on ordinary runs by the pinned CLI (payload shape
+            // captured against 2.1.220, 2026-08-30).
+            emit(&json!({"type": "rate_limit_event", "rate_limit_info": {
+                "status": "allowed", "resetsAt": 1_788_118_800_u64,
+                "rateLimitType": "five_hour", "overageStatus": "allowed",
+                "overageResetsAt": 1_788_220_800_u64, "isUsingOverage": false}}));
             emit(
                 &json!({"type": "result", "subtype": "success", "is_error": false,
                 "session_id": session, "result": text, "terminal_reason": "completed",
                 "total_cost_usd": 0.02, "duration_ms": 40,
-                "usage": {"input_tokens": 7, "output_tokens": 3}}),
+                "usage": {"input_tokens": 7, "output_tokens": 3,
+                "cache_read_input_tokens": 22_694, "cache_creation_input_tokens": 12_529}}),
             );
             // Real protocol trap: a trailing frame after the result.
             emit(&json!({"type": "system", "subtype": "task_summary"}));

@@ -37,6 +37,11 @@ not add a partial amount to the token total. Unknown cost similarly increases
 Every completed turn still counts against `max_turns`. If a backend cannot
 report the dimension that must be bounded, use a turn cap as the hard limit.
 
+Budgets enforce on cost and input + output tokens only. The finer
+accounting a backend may report — cache splits, reasoning tokens, limit
+and credit state — is recorded and rolled up for the operator but never
+enters cap arithmetic; see [Usage and credits](usage-and-credits.md).
+
 ## Retries spend budget
 
 Retries count because the vendor may already have generated tokens before an

@@ -70,6 +70,28 @@ pub(crate) fn retry_after_hint(headers: &reqwest::header::HeaderMap) -> Option<D
         .map(Duration::from_secs)
 }
 
+/// Read a vendor's remaining-quota response headers into the seam's
+/// sparse limit shape (both API vendors stamp every response with them).
+/// Absent or unparsable headers stay `None`; window-reset headers are
+/// deliberately not read here — the two vendors encode them in different,
+/// non-numeric formats.
+pub(crate) fn header_limit_status(
+    headers: &reqwest::header::HeaderMap,
+    remaining_requests_header: &str,
+    remaining_tokens_header: &str,
+) -> odori_agents::provider::ProviderLimitStatus {
+    let read = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+    };
+    let mut limit = odori_agents::provider::ProviderLimitStatus::default();
+    limit.remaining_requests = read(remaining_requests_header);
+    limit.remaining_tokens = read(remaining_tokens_header);
+    limit
+}
+
 /// Whether an HTTP status is the transient class (retry with backoff).
 pub(crate) fn is_transient(status: reqwest::StatusCode) -> bool {
     status.as_u16() == 429 || status.as_u16() == 529 || status.is_server_error()

@@ -36,7 +36,11 @@
 // The allow is file-scoped; every hand-written type here derives Debug.
 #![allow(missing_debug_implementations)]
 
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -57,8 +61,8 @@ use crate::{
     handoff::{Handoff, HandoffContext},
     invocation::{Admission, InvocationId, InvocationRegistry, ToolCallResult},
     provider::{
-        Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnIdentity, TurnOutcome,
-        TurnRequest, TurnUsage,
+        Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent, TurnEventSink,
+        TurnIdentity, TurnOutcome, TurnRequest, TurnUsage,
     },
     telemetry,
     tool::{ToolContext, ToolFailure, ToolPolicy},
@@ -156,6 +160,10 @@ pub struct TurnRecord {
     pub session_id: String,
     /// The turn's reported usage.
     pub usage: TurnUsage,
+    /// The latest account limit/credit observation the backend reported
+    /// during the turn, when it reported one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<ProviderLimitStatus>,
 }
 
 /// Aggregated run accounting.
@@ -169,6 +177,15 @@ pub struct RunUsage {
     pub input_tokens: u64,
     /// Sum of reported output tokens.
     pub output_tokens: u64,
+    /// Sum of reported cache-served input tokens. Absent turn figures
+    /// contribute nothing: these fields are provider-dependent detail
+    /// (the capability matrix says who reports them), not part of the
+    /// unknown-turn accounting below.
+    pub cached_input_tokens: u64,
+    /// Sum of reported cache-written input tokens.
+    pub cache_creation_input_tokens: u64,
+    /// Sum of reported reasoning output tokens.
+    pub reasoning_output_tokens: u64,
     /// Completed turns for which either token figure was unknown.
     pub turns_with_unknown_tokens: u32,
     /// Completed turns for which cost was unknown.
@@ -193,14 +210,32 @@ impl RunUsage {
                 self.turns_with_unknown_tokens += 1;
             }
         }
+        self.cached_input_tokens += turn.cached_input_tokens.unwrap_or(0);
+        self.cache_creation_input_tokens += turn.cache_creation_input_tokens.unwrap_or(0);
+        self.reasoning_output_tokens += turn.reasoning_output_tokens.unwrap_or(0);
     }
 
     fn absorb_run(&mut self, child: &Self) {
         self.total_cost_usd += child.total_cost_usd;
         self.input_tokens += child.input_tokens;
         self.output_tokens += child.output_tokens;
+        self.cached_input_tokens += child.cached_input_tokens;
+        self.cache_creation_input_tokens += child.cache_creation_input_tokens;
+        self.reasoning_output_tokens += child.reasoning_output_tokens;
         self.turns_with_unknown_tokens += child.turns_with_unknown_tokens;
         self.turns_with_unknown_cost += child.turns_with_unknown_cost;
+    }
+
+    /// Roll a transcript's recorded turns up into one aggregate — the
+    /// per-session view over any set of [`TurnRecord`]s a caller holds
+    /// (one conversation's transcript, or several runs' transcripts
+    /// concatenated). Pure client-side arithmetic over recorded history.
+    pub fn from_turns<'turn>(turns: impl IntoIterator<Item = &'turn TurnRecord>) -> Self {
+        let mut usage = Self::default();
+        for record in turns {
+            usage.absorb_turn(&record.usage);
+        }
+        usage
     }
 
     /// Total reported input + output tokens. Unknown turns are called out by
@@ -410,6 +445,7 @@ impl AgentRun {
                 text: outcome.text.clone(),
                 session_id: outcome.session_id.clone(),
                 usage: outcome.usage.clone(),
+                limit: outcome.limit.clone(),
             };
             ctx.state_mut(|state| state.transcript.push(record));
 
@@ -850,6 +886,10 @@ pub struct TurnActivityOutput {
     pub text: String,
     /// Reported usage.
     pub usage: TurnUsage,
+    /// The latest account limit/credit observation reported during the
+    /// turn, when the backend reported one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<ProviderLimitStatus>,
 }
 
 impl From<TurnOutcome> for TurnActivityOutput {
@@ -858,6 +898,7 @@ impl From<TurnOutcome> for TurnActivityOutput {
             session_id: outcome.session_id,
             text: outcome.text,
             usage: outcome.usage,
+            limit: None,
         }
     }
 }
@@ -1035,6 +1076,10 @@ impl TurnActivities {
         let pump_prior_usage = prior_usage.clone();
         let pump_usage_snapshot = usage_snapshot.clone();
         let pump_span = span.clone();
+        // The latest non-empty limit observation, shared with the pump so
+        // the completed turn records it.
+        let latest_limit: Arc<Mutex<Option<ProviderLimitStatus>>> = Arc::new(Mutex::new(None));
+        let pump_limit = latest_limit.clone();
         let pump = tokio::spawn(
             async move {
                 let mut state = prior;
@@ -1046,6 +1091,9 @@ impl TurnActivities {
                         }
                         TurnEvent::ToolUse { name } => {
                             telemetry::record_harness_tool_use(&pump_span, name);
+                        }
+                        TurnEvent::LimitObserved { limit } if !limit.is_empty() => {
+                            *pump_limit.lock().expect("turn limit lock") = Some(limit.clone());
                         }
                         _ => {}
                     }
@@ -1078,7 +1126,8 @@ impl TurnActivities {
         match outcome {
             Ok(mut outcome) => {
                 outcome.usage = aggregate_success_usage(&prior_usage, &outcome.usage);
-                let output: TurnActivityOutput = outcome.into();
+                let mut output: TurnActivityOutput = outcome.into();
+                output.limit = latest_limit.lock().expect("turn limit lock").take();
                 telemetry::record_turn_success(&span, &output);
                 Ok(output)
             }
@@ -1090,20 +1139,32 @@ impl TurnActivities {
     }
 }
 
+fn add_option_u64(prior: Option<u64>, current: Option<u64>) -> Option<u64> {
+    current.map(|value| prior.unwrap_or(0) + value)
+}
+
 fn carry_usage_snapshot(prior: &TurnUsage, current: &TurnUsage) -> TurnUsage {
     TurnUsage {
         total_cost_usd: current
             .total_cost_usd
             .map(|value| prior.total_cost_usd.unwrap_or(0.0) + value)
             .or(prior.total_cost_usd),
-        input_tokens: current
-            .input_tokens
-            .map(|value| prior.input_tokens.unwrap_or(0) + value)
+        input_tokens: add_option_u64(prior.input_tokens, current.input_tokens)
             .or(prior.input_tokens),
-        output_tokens: current
-            .output_tokens
-            .map(|value| prior.output_tokens.unwrap_or(0) + value)
+        output_tokens: add_option_u64(prior.output_tokens, current.output_tokens)
             .or(prior.output_tokens),
+        cached_input_tokens: add_option_u64(prior.cached_input_tokens, current.cached_input_tokens)
+            .or(prior.cached_input_tokens),
+        cache_creation_input_tokens: add_option_u64(
+            prior.cache_creation_input_tokens,
+            current.cache_creation_input_tokens,
+        )
+        .or(prior.cache_creation_input_tokens),
+        reasoning_output_tokens: add_option_u64(
+            prior.reasoning_output_tokens,
+            current.reasoning_output_tokens,
+        )
+        .or(prior.reasoning_output_tokens),
         duration: current
             .duration
             .map(|value| prior.duration.unwrap_or_default() + value)
@@ -1116,12 +1177,20 @@ fn aggregate_success_usage(prior: &TurnUsage, successful: &TurnUsage) -> TurnUsa
         total_cost_usd: successful
             .total_cost_usd
             .map(|value| prior.total_cost_usd.unwrap_or(0.0) + value),
-        input_tokens: successful
-            .input_tokens
-            .map(|value| prior.input_tokens.unwrap_or(0) + value),
-        output_tokens: successful
-            .output_tokens
-            .map(|value| prior.output_tokens.unwrap_or(0) + value),
+        input_tokens: add_option_u64(prior.input_tokens, successful.input_tokens),
+        output_tokens: add_option_u64(prior.output_tokens, successful.output_tokens),
+        cached_input_tokens: add_option_u64(
+            prior.cached_input_tokens,
+            successful.cached_input_tokens,
+        ),
+        cache_creation_input_tokens: add_option_u64(
+            prior.cache_creation_input_tokens,
+            successful.cache_creation_input_tokens,
+        ),
+        reasoning_output_tokens: add_option_u64(
+            prior.reasoning_output_tokens,
+            successful.reasoning_output_tokens,
+        ),
         duration: successful
             .duration
             .map(|value| prior.duration.unwrap_or_default() + value),
@@ -1178,17 +1247,32 @@ mod tests {
             total_cost_usd: Some(0.20),
             input_tokens: Some(100),
             output_tokens: Some(25),
+            cached_input_tokens: Some(60),
             duration: Some(Duration::from_secs(2)),
+            ..TurnUsage::default()
         };
         let retry_snapshot = TurnUsage {
             total_cost_usd: Some(0.30),
             input_tokens: Some(150),
             output_tokens: Some(40),
+            cached_input_tokens: Some(90),
+            reasoning_output_tokens: Some(12),
             duration: Some(Duration::from_secs(3)),
+            ..TurnUsage::default()
         };
         let carried = carry_usage_snapshot(&failed, &retry_snapshot);
         assert_eq!(carried.total_cost_usd, Some(0.50));
         assert_eq!(carried.input_tokens, Some(250));
+        assert_eq!(carried.cached_input_tokens, Some(150));
+        assert_eq!(
+            carried.reasoning_output_tokens,
+            Some(12),
+            "a figure only the retry reported carries forward alone"
+        );
+        assert_eq!(
+            carried.cache_creation_input_tokens, None,
+            "a figure neither attempt reported stays unknown"
+        );
         assert_eq!(carried.output_tokens, Some(65));
         assert_eq!(carried.duration, Some(Duration::from_secs(5)));
         let aggregate = aggregate_success_usage(&failed, &retry_snapshot);
@@ -1235,6 +1319,52 @@ mod tests {
         .expect("old heartbeat shape");
         assert_eq!(heartbeat.session_id.as_deref(), Some("session-old"));
         assert!(heartbeat.usage.input_tokens.is_none());
+
+        // A transcript record written before the usage extension and the
+        // limit observation replays with the new fields absent.
+        let record: TurnRecord = serde_json::from_value(serde_json::json!({
+            "turn": 0,
+            "input": "hello",
+            "text": "hi",
+            "session_id": "session-old",
+            "usage": {"total_cost_usd": 0.1, "input_tokens": 5, "output_tokens": 2,
+                      "duration": null}
+        }))
+        .expect("old transcript record shape");
+        assert_eq!(record.usage.cached_input_tokens, None);
+        assert!(record.limit.is_none());
+        let json = serde_json::to_value(&record).expect("serialize");
+        assert!(
+            json.get("limit").is_none(),
+            "an unobserved limit serializes to nothing"
+        );
+    }
+
+    #[test]
+    fn session_rollups_sum_recorded_turns() {
+        let record = |cost: f64, cached: Option<u64>| TurnRecord {
+            turn: 0,
+            input: String::new(),
+            text: String::new(),
+            session_id: "session".to_owned(),
+            usage: TurnUsage {
+                total_cost_usd: Some(cost),
+                input_tokens: Some(10),
+                output_tokens: Some(4),
+                cached_input_tokens: cached,
+                ..TurnUsage::default()
+            },
+            limit: None,
+        };
+        let transcript = [record(0.1, Some(6)), record(0.2, None)];
+        let usage = RunUsage::from_turns(&transcript);
+        assert!((usage.total_cost_usd - 0.3).abs() < f64::EPSILON);
+        assert_eq!(usage.input_tokens, 20);
+        assert_eq!(
+            usage.cached_input_tokens, 6,
+            "absent per-turn figures contribute nothing, not zeroed turns"
+        );
+        assert_eq!(usage.turns_with_unknown_tokens, 0);
     }
 
     proptest! {
@@ -1286,7 +1416,7 @@ mod tests {
                     total_cost_usd: Some(last_cost),
                     input_tokens: Some(u64::from(*input)),
                     output_tokens: Some(u64::from(*output)),
-                    duration: None,
+                    ..TurnUsage::default()
                 });
                 completed += 1;
                 if let Some(cap) = post_turn_budget_cap(&budget, &usage, completed) {
