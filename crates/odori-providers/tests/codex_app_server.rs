@@ -79,7 +79,8 @@ for line in sys.stdin:
         emit({{"method": "item/started", "params": {{"threadId": "thread-fake", "turnId": "turn-fake", "item": {{"type": "mcpToolCall", "id": "exec-fake", "server": "odori", "tool": "deploy"}}}}}})
         emit({{"id": request_id, "result": {{"turn": {{"id": "turn-fake"}}}}}})
         emit({{"method": "item/completed", "params": {{"threadId": "thread-fake", "turnId": "turn-fake", "item": {{"type": "agentMessage", "id": "msg-fake", "text": "fake-ok", "phase": "final_answer"}}}}}})
-        emit({{"method": "thread/tokenUsage/updated", "params": {{"threadId": "thread-fake", "turnId": "turn-fake", "tokenUsage": {{"last": {{"inputTokens": 12, "outputTokens": 3}}}}}}}})
+        emit({{"method": "thread/tokenUsage/updated", "params": {{"threadId": "thread-fake", "turnId": "turn-fake", "tokenUsage": {{"last": {{"inputTokens": 12, "cachedInputTokens": 9, "cacheWriteInputTokens": 2, "outputTokens": 3, "reasoningOutputTokens": 1}}}}}}}})
+        emit({{"method": "account/rateLimits/updated", "params": {{"rateLimits": {{"limitId": "codex", "primary": {{"usedPercent": 8, "windowDurationMins": 10080, "resetsAt": 1788687988}}, "credits": {{"hasCredits": True, "unlimited": False, "balance": "1231.7867115000"}}, "planType": "pro", "rateLimitReachedType": None}}}}}})
         emit({{"method": "turn/completed", "params": {{"threadId": "thread-fake", "turn": {{"id": "turn-fake", "status": "completed", "durationMs": 42, "error": None}}}}}})
 "#,
         expected = EXPECTED_CODEX_CLI_VERSION
@@ -117,6 +118,9 @@ async fn scripted_app_server_turn_streams_events_and_result() {
     assert_eq!(outcome.text, "fake-ok");
     assert_eq!(outcome.usage.input_tokens, Some(12));
     assert_eq!(outcome.usage.output_tokens, Some(3));
+    assert_eq!(outcome.usage.cached_input_tokens, Some(9));
+    assert_eq!(outcome.usage.cache_creation_input_tokens, Some(2));
+    assert_eq!(outcome.usage.reasoning_output_tokens, Some(1));
     assert_eq!(outcome.usage.total_cost_usd, None);
     assert_eq!(outcome.usage.duration, Some(Duration::from_millis(42)));
 
@@ -136,6 +140,19 @@ async fn scripted_app_server_turn_streams_events_and_result() {
         events
             .iter()
             .any(|event| matches!(event, TurnEvent::Liveness))
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            TurnEvent::LimitObserved { limit }
+                if limit.used_percent == Some(8.0)
+                    && limit.window_minutes == Some(10_080)
+                    && limit.resets_at_epoch_seconds == Some(1_788_687_988)
+                    && limit.credits_balance.as_deref() == Some("1231.7867115000")
+                    && limit.credits_unlimited == Some(false)
+                    && limit.plan.as_deref() == Some("pro")
+        )),
+        "account/rateLimits/updated must surface as LimitObserved: {events:?}"
     );
 
     std::fs::remove_file(command).expect("remove fake Codex executable");

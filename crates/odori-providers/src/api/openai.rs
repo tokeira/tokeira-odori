@@ -18,8 +18,8 @@ use odori_agents::provider::{
 use serde_json::{Value, json};
 
 use super::{
-    BridgeTools, MAX_HTTP_ATTEMPTS, api_key, backoff_delay, is_transient, read_sse,
-    retry_after_hint, wait_out,
+    BridgeTools, MAX_HTTP_ATTEMPTS, api_key, backoff_delay, header_limit_status, is_transient,
+    read_sse, retry_after_hint, wait_out,
 };
 
 /// Configuration for [`OpenAiProvider`].
@@ -92,6 +92,8 @@ struct Exchange {
     function_calls: Vec<(String, String, Value)>,
     input_tokens: u64,
     output_tokens: u64,
+    cached_input_tokens: u64,
+    reasoning_output_tokens: u64,
     status_error: Option<String>,
 }
 
@@ -136,6 +138,8 @@ impl Provider for OpenAiProvider {
         let reasoning_effort = request.directives.effort.map(openai_effort).transpose()?;
         let mut total_input = 0_u64;
         let mut total_output = 0_u64;
+        let mut total_cached_input = 0_u64;
+        let mut total_reasoning_output = 0_u64;
         let started = std::time::Instant::now();
 
         for _iteration in 0..self.config.max_loop_iterations {
@@ -171,9 +175,13 @@ impl Provider for OpenAiProvider {
                 .await?;
             total_input += exchange.input_tokens;
             total_output += exchange.output_tokens;
+            total_cached_input += exchange.cached_input_tokens;
+            total_reasoning_output += exchange.reasoning_output_tokens;
             let mut usage = TurnUsage::default();
             usage.input_tokens = Some(total_input);
             usage.output_tokens = Some(total_output);
+            usage.cached_input_tokens = Some(total_cached_input);
+            usage.reasoning_output_tokens = Some(total_reasoning_output);
             usage.duration = Some(started.elapsed());
             events.report_usage(usage);
             if let Some(error) = exchange.status_error {
@@ -188,6 +196,8 @@ impl Provider for OpenAiProvider {
                     TurnOutcome::new(exchange.response_id.clone(), exchange.text.clone());
                 outcome.usage.input_tokens = Some(total_input);
                 outcome.usage.output_tokens = Some(total_output);
+                outcome.usage.cached_input_tokens = Some(total_cached_input);
+                outcome.usage.reasoning_output_tokens = Some(total_reasoning_output);
                 outcome.usage.duration = Some(started.elapsed());
                 return Ok(outcome);
             }
@@ -267,6 +277,15 @@ impl OpenAiProvider {
             }
         };
 
+        let limit = header_limit_status(
+            response.headers(),
+            "x-ratelimit-remaining-requests",
+            "x-ratelimit-remaining-tokens",
+        );
+        if !limit.is_empty() {
+            events.emit(TurnEvent::LimitObserved { limit });
+        }
+
         let mut exchange = Exchange::default();
         read_sse(response, |frame| {
             let Ok(data) = serde_json::from_str::<Value>(&frame.data) else {
@@ -287,6 +306,14 @@ impl OpenAiProvider {
                         .unwrap_or(0);
                     exchange.output_tokens = response
                         .pointer("/usage/output_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    exchange.cached_input_tokens = response
+                        .pointer("/usage/input_tokens_details/cached_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    exchange.reasoning_output_tokens = response
+                        .pointer("/usage/output_tokens_details/reasoning_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
                     for item in response["output"].as_array().into_iter().flatten() {

@@ -409,6 +409,60 @@ impl TurnEventSink {
     }
 }
 
+/// A provider-reported account limit, quota, or credit observation.
+///
+/// One sparse shape serves every backend: each provider fills the fields
+/// its surface actually reports and leaves the rest `None` — the
+/// capability matrix in `docs/usage-and-credits.md` is the field-by-field
+/// truth. Vendor enums ride as verbatim strings (they drift between CLI
+/// versions), and the codex credit balance stays the decimal string the
+/// vendor sent — money is never coerced through a float.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProviderLimitStatus {
+    /// Vendor's own status word (Claude `rate_limit_event.status`, codex
+    /// `rateLimitReachedType`), verbatim.
+    pub status: Option<String>,
+    /// Which limit window this describes (Claude `rateLimitType`, e.g.
+    /// `"five_hour"`), verbatim.
+    pub kind: Option<String>,
+    /// Percentage of the window already used (codex `primary.usedPercent`).
+    pub used_percent: Option<f64>,
+    /// The limit window's length in minutes (codex
+    /// `primary.windowDurationMins`).
+    pub window_minutes: Option<u64>,
+    /// When the window resets, as Unix seconds.
+    pub resets_at_epoch_seconds: Option<u64>,
+    /// Whether the account is currently spending overage (Claude).
+    pub using_overage: Option<bool>,
+    /// The vendor's overage status word, verbatim (Claude).
+    pub overage_status: Option<String>,
+    /// When overage capacity resets, as Unix seconds (Claude).
+    pub overage_resets_at_epoch_seconds: Option<u64>,
+    /// Remaining credit balance as the vendor's decimal string (codex
+    /// `credits.balance`).
+    pub credits_balance: Option<String>,
+    /// Whether the plan's credits are unlimited (codex).
+    pub credits_unlimited: Option<bool>,
+    /// The vendor plan name, verbatim (codex `planType`).
+    pub plan: Option<String>,
+    /// Requests remaining in the current window (API-tier rate-limit
+    /// response headers).
+    pub remaining_requests: Option<u64>,
+    /// Tokens remaining in the current window (API-tier rate-limit
+    /// response headers).
+    pub remaining_tokens: Option<u64>,
+}
+
+impl ProviderLimitStatus {
+    /// `true` when no field was reported — used to avoid recording empty
+    /// observations.
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 /// In-flight observations from a running turn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -427,6 +481,13 @@ pub enum TurnEvent {
     ToolUse {
         /// Tool name as the backend reported it.
         name: String,
+    },
+    /// The backend reported account limit, quota, or credit state. The
+    /// turn activity records the latest observation with the completed
+    /// turn; between observations the previous one stands.
+    LimitObserved {
+        /// The observation, sparse per backend.
+        limit: ProviderLimitStatus,
     },
 }
 
@@ -470,6 +531,16 @@ pub struct TurnUsage {
     pub input_tokens: Option<u64>,
     /// Output tokens produced.
     pub output_tokens: Option<u64>,
+    /// Input tokens served from the backend's prompt cache (a subset of
+    /// [`TurnUsage::input_tokens`] on some backends, reported beside it on
+    /// others — the capability matrix in `docs/usage-and-credits.md` says
+    /// which). `None` means the backend did not report the figure.
+    pub cached_input_tokens: Option<u64>,
+    /// Input tokens written into the backend's prompt cache.
+    pub cache_creation_input_tokens: Option<u64>,
+    /// Output tokens spent on reasoning/thinking, where the backend
+    /// reports them distinctly.
+    pub reasoning_output_tokens: Option<u64>,
     /// Wall-clock duration of the turn.
     pub duration: Option<Duration>,
 }
@@ -667,6 +738,54 @@ mod tests {
             back.session,
             SessionDirective::ResumeForked { .. }
         ));
+    }
+
+    #[test]
+    fn pre_extension_usage_wire_shapes_still_deserialize() {
+        // The accounting shape recorded by earlier releases: absent cache
+        // and reasoning figures deserialize to None (not zero, not error),
+        // so replaying old history is untouched by the extension.
+        let usage: TurnUsage = serde_json::from_value(serde_json::json!({
+            "total_cost_usd": 0.25,
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "duration": {"secs": 2, "nanos": 0}
+        }))
+        .expect("old usage shape");
+        assert_eq!(usage.cached_input_tokens, None);
+        assert_eq!(usage.cache_creation_input_tokens, None);
+        assert_eq!(usage.reasoning_output_tokens, None);
+        assert_eq!(usage.input_tokens, Some(100));
+    }
+
+    #[test]
+    fn limit_status_is_sparse_tolerant_and_detects_emptiness() {
+        let empty = ProviderLimitStatus::default();
+        assert!(empty.is_empty());
+
+        let claude_shaped: ProviderLimitStatus = serde_json::from_value(serde_json::json!({
+            "status": "allowed",
+            "kind": "five_hour",
+            "resets_at_epoch_seconds": 1_788_118_800_u64,
+            "using_overage": false
+        }))
+        .expect("sparse claude-shaped observation");
+        assert!(!claude_shaped.is_empty());
+        assert_eq!(claude_shaped.credits_balance, None);
+
+        let codex_shaped: ProviderLimitStatus = serde_json::from_value(serde_json::json!({
+            "used_percent": 8.0,
+            "window_minutes": 10_080_u64,
+            "credits_balance": "1231.7867115000",
+            "credits_unlimited": false,
+            "plan": "pro"
+        }))
+        .expect("sparse codex-shaped observation");
+        assert_eq!(
+            codex_shaped.credits_balance.as_deref(),
+            Some("1231.7867115000"),
+            "credit balances stay verbatim decimal strings"
+        );
     }
 
     #[test]

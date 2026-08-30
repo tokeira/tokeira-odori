@@ -17,8 +17,8 @@ use odori_agents::provider::{
 use serde_json::{Value, json};
 
 use super::{
-    BridgeTools, MAX_HTTP_ATTEMPTS, SessionStore, api_key, backoff_delay, is_transient, read_sse,
-    retry_after_hint, wait_out,
+    BridgeTools, MAX_HTTP_ATTEMPTS, SessionStore, api_key, backoff_delay, header_limit_status,
+    is_transient, read_sse, retry_after_hint, wait_out,
 };
 
 /// Configuration for [`AnthropicProvider`].
@@ -167,6 +167,8 @@ struct Exchange {
     stop_reason: Option<String>,
     input_tokens: u64,
     output_tokens: u64,
+    cached_input_tokens: u64,
+    cache_creation_input_tokens: u64,
 }
 
 #[async_trait]
@@ -223,6 +225,8 @@ impl Provider for AnthropicProvider {
 
         let mut total_input = 0_u64;
         let mut total_output = 0_u64;
+        let mut total_cached_input = 0_u64;
+        let mut total_cache_creation = 0_u64;
         let started = std::time::Instant::now();
         let final_text = 'turn: {
             for _iteration in 0..self.config.max_loop_iterations {
@@ -249,9 +253,13 @@ impl Provider for AnthropicProvider {
                 let exchange = self.stream_once(&key, &body, &events).await?;
                 total_input += exchange.input_tokens;
                 total_output += exchange.output_tokens;
+                total_cached_input += exchange.cached_input_tokens;
+                total_cache_creation += exchange.cache_creation_input_tokens;
                 let mut usage = TurnUsage::default();
                 usage.input_tokens = Some(total_input);
                 usage.output_tokens = Some(total_output);
+                usage.cached_input_tokens = Some(total_cached_input);
+                usage.cache_creation_input_tokens = Some(total_cache_creation);
                 usage.duration = Some(started.elapsed());
                 events.report_usage(usage);
                 messages.push(json!({"role": "assistant", "content": exchange.content}));
@@ -313,6 +321,8 @@ impl Provider for AnthropicProvider {
         let mut outcome = TurnOutcome::new(session_id, final_text);
         outcome.usage.input_tokens = Some(total_input);
         outcome.usage.output_tokens = Some(total_output);
+        outcome.usage.cached_input_tokens = Some(total_cached_input);
+        outcome.usage.cache_creation_input_tokens = Some(total_cache_creation);
         outcome.usage.duration = Some(started.elapsed());
         Ok(outcome)
     }
@@ -364,6 +374,15 @@ impl AnthropicProvider {
             }
         };
 
+        let limit = header_limit_status(
+            response.headers(),
+            "anthropic-ratelimit-requests-remaining",
+            "anthropic-ratelimit-tokens-remaining",
+        );
+        if !limit.is_empty() {
+            events.emit(TurnEvent::LimitObserved { limit });
+        }
+
         let mut exchange = Exchange::default();
         // Streaming assembly: text deltas append to text blocks; tool_use
         // blocks accumulate partial JSON until their stop.
@@ -374,10 +393,15 @@ impl AnthropicProvider {
             };
             match data["type"].as_str().unwrap_or("") {
                 "message_start" => {
-                    exchange.input_tokens += data
-                        .pointer("/message/usage/input_tokens")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0);
+                    let usage_field = |name: &str| {
+                        data.pointer(&format!("/message/usage/{name}"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0)
+                    };
+                    exchange.input_tokens += usage_field("input_tokens");
+                    exchange.cached_input_tokens += usage_field("cache_read_input_tokens");
+                    exchange.cache_creation_input_tokens +=
+                        usage_field("cache_creation_input_tokens");
                 }
                 "content_block_start" => {
                     let index = data["index"].as_u64().unwrap_or(0) as usize;

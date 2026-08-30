@@ -24,8 +24,8 @@ pub use odori_providers as providers;
 
 pub use odori_agents::{
     Agent, AgentOutput, AgentRegistry, Conversation, Effort, Guardrail, GuardrailVerdict, Json,
-    Provider, Providers, RunBudget, RunConfig, RunEnd, RunOutput, Runner, RunnerError, Tool,
-    ToolFailure, ToolPolicy, TurnRecord,
+    Provider, ProviderLimitStatus, Providers, RunBudget, RunConfig, RunEnd, RunOutput, Runner,
+    RunnerError, Tool, ToolFailure, ToolPolicy, TurnRecord,
 };
 pub use odori_engine::{
     ClusterStartupReport, ConnectTarget, DsqlMigrationPolicy, EmbeddedConfigError,

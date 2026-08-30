@@ -24,9 +24,44 @@ pub enum StreamEvent {
     /// The terminal result: exactly one per run, present even on failures,
     /// but **not always the last line** — drain to EOF after it.
     Result(ResultEvent),
-    /// Anything this pin does not know (`rate_limit_event`, future kinds).
+    /// Subscription rate-limit state, emitted on ordinary runs (observed
+    /// at the 2.1.220 pin, 2026-08-30).
+    #[serde(rename = "rate_limit_event")]
+    RateLimit(RateLimitEvent),
+    /// Anything this pin does not know (future kinds).
     #[serde(untagged)]
     Other(Value),
+}
+
+/// `{"type":"rate_limit_event","rate_limit_info":{...}}`.
+#[derive(Debug, Deserialize)]
+pub struct RateLimitEvent {
+    /// The limit payload; absent fields stay `None` under protocol drift.
+    #[serde(default)]
+    pub rate_limit_info: Option<RateLimitInfo>,
+}
+
+/// The pin's `rate_limit_info` payload, camelCase on the wire.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct RateLimitInfo {
+    /// `"allowed"`, and vendor words beyond it, verbatim.
+    pub status: Option<String>,
+    /// Unix seconds when the current window resets.
+    #[serde(rename = "resetsAt")]
+    pub resets_at: Option<u64>,
+    /// Which window the event describes (e.g. `"five_hour"`).
+    #[serde(rename = "rateLimitType")]
+    pub rate_limit_type: Option<String>,
+    /// Overage status word, verbatim.
+    #[serde(rename = "overageStatus")]
+    pub overage_status: Option<String>,
+    /// Unix seconds when overage capacity resets.
+    #[serde(rename = "overageResetsAt")]
+    pub overage_resets_at: Option<u64>,
+    /// Whether the account is currently consuming overage.
+    #[serde(rename = "isUsingOverage")]
+    pub is_using_overage: Option<bool>,
 }
 
 /// `{"type":"system", ...}`.
@@ -141,7 +176,10 @@ pub struct ResultEvent {
     pub usage: Option<ResultUsage>,
 }
 
-/// The `usage` object of a result event.
+/// The `usage` object of a result event. Cache figures are present at
+/// the 2.1.220 pin; `output_tokens_details` (thinking tokens) appears in
+/// later CLI versions and stays `None` at the pin — both measured
+/// 2026-08-30.
 #[derive(Debug, Deserialize)]
 pub struct ResultUsage {
     /// Input tokens consumed.
@@ -150,4 +188,21 @@ pub struct ResultUsage {
     /// Output tokens produced.
     #[serde(default)]
     pub output_tokens: Option<u64>,
+    /// Input tokens served from the prompt cache.
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
+    /// Input tokens written into the prompt cache.
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
+    /// Output-token detail, where the CLI version reports it.
+    #[serde(default)]
+    pub output_tokens_details: Option<OutputTokensDetails>,
+}
+
+/// The `usage.output_tokens_details` object (2.1.237+; absent at the pin).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct OutputTokensDetails {
+    /// Output tokens spent thinking.
+    pub thinking_tokens: Option<u64>,
 }

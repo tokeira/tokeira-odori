@@ -42,7 +42,9 @@ pub use guardrail::{Guardrail, GuardrailVerdict, RunBudget};
 pub use handoff::{Handoff, HandoffContext};
 pub use invocation::{InvocationId, InvocationRegistry, ToolCallResult};
 pub use output::{AgentOutput, Json};
-pub use provider::{Effort, Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest};
+pub use provider::{
+    Effort, Provider, ProviderLimitStatus, TurnError, TurnEventSink, TurnOutcome, TurnRequest,
+};
 pub use run::{
     AgentRun, BudgetCap, Providers, RunConfig, RunEnd, RunOutput, RunUsage, TurnActivities,
     TurnRecord,
