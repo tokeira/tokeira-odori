@@ -6,12 +6,25 @@ members = [
     "crates/odori-providers",
     "crates/odori-engine",
     "crates/odori-mcp-bridge",
+    # `publish = false` — examples and tests: built by `--workspace`, never shipped.
+    "crates/odori-dev-support",
+    "examples",
+    "tests/embedded",
+]
+# The shipped shape: bare `cargo build/clippy/test/doc` compiles these with
+# `preview` off, as a `cargo add odori` user gets them. `--workspace` adds the
+# examples and tests, which turn `preview` on for the whole build.
+default-members = [
+    "crates/odori",
+    "crates/odori-agents",
+    "crates/odori-providers",
+    "crates/odori-engine",
+    "crates/odori-mcp-bridge",
 ]
 exclude = [
-    # The embedded integration harness depends on the engine repo; excluded so
-    # that graph never expands or constrains the product workspace. Run with
-    # `cargo test --manifest-path tests/embedded/Cargo.toml`.
-    "tests/embedded",
+    # `include_str!`'d source, built only as temp copies — never in place.
+    "examples/approval-resume/fixture",
+    "examples/slice-fleet/fixture",
     # Phase-1 protocol probe for the subscription-backed Codex provider. It
     # carries its own lockfile so experimental dependencies and wire probes do
     # not move the product workspace graph.
@@ -47,10 +60,12 @@ temporalio-workflow = "0.7"
 # publishes to crates.io on its own release train.
 tokeira-config = "0.1.1"
 tokeira-engine = "0.1.1"
+tokeira-managed-dsql = "0.1.1"
 
 anyhow = "1.0"
 async-trait = "0.1"
 bytes = "1"
+clap = { version = "4.5", features = ["derive"] }
 http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
@@ -70,6 +85,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
 ] }
 futures = "0.3"
+# Telemetry exporter exercised by the logfire example.
+logfire = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
@@ -86,6 +103,9 @@ odori-agents = { path = "crates/odori-agents", version = "0.1.1" }
 odori-providers = { path = "crates/odori-providers", version = "0.1.1" }
 odori-engine = { path = "crates/odori-engine", version = "0.1.1" }
 odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.1" }
+# Unpublished: dev-only support, and the scenarios the tests assert on.
+odori-dev-support = { path = "crates/odori-dev-support" }
+odori-examples = { path = "examples" }
 
 [patch.crates-io]
 temporalio-client = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }

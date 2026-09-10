@@ -14,7 +14,7 @@ workflow updates, HTTP MCP bridge, registry, activities, retries, and budgets.
 Run the deterministic path:
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example slice-fleet
+cargo run -p odori-examples --example slice-fleet
 ```
 
 The same path accepts `--storage in-memory`, `--storage managed-dsql`, or

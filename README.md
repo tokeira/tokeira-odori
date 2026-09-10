@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 Clone the repository, authenticate the Codex CLI as described below, then run:
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
+cargo run -p odori-examples --example hello-durable
 ```
 
 The fixed run ID, `hello-1`, is the idempotency key for the complete durable

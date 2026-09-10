@@ -60,7 +60,7 @@ directory.
 export ODORI_DSQL_REGION=eu-west-2
 export ODORI_DSQL_DESCRIPTOR_PATH=/absolute/operator-owned/odori/rewind-cluster.json
 
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind -- \
+cargo run -p odori-examples --example rewind -- \
   --storage managed-dsql
 ```
 
@@ -128,7 +128,7 @@ export ODORI_DSQL_CLUSTER_ARN=<cluster-arn>
 export ODORI_DSQL_ENDPOINT=<cluster-endpoint>
 export ODORI_DSQL_MIGRATION_POLICY=automatic
 
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind -- \
+cargo run -p odori-examples --example rewind -- \
   --storage adopt-existing-endpoint
 ```
 

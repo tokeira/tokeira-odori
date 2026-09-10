@@ -29,7 +29,7 @@ Keep one temporary directory alive across both commands:
 
 ```console
 state_directory="$(mktemp -d "${TMPDIR:-/tmp}/odori-approval-resume.XXXXXX")"
-cargo run --manifest-path tests/embedded/Cargo.toml --example approval-resume -- \
+cargo run -p odori-examples --example approval-resume -- \
   prepare "$state_directory"
 ```
 
@@ -40,7 +40,7 @@ is still failing at this point.
 ## Restore and complete
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example approval-resume -- \
+cargo run -p odori-examples --example approval-resume -- \
   resume "$state_directory" --approve plan-v1-fix-increment
 rm -r "$state_directory"
 ```

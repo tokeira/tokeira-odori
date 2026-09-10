@@ -1,4 +1,4 @@
-//! Embedded engine, worker assembly, and the durable checkpoint tool.
+//! Worker assembly and the durable checkpoint tool.
 
 use std::{
     net::TcpListener,
@@ -6,10 +6,11 @@ use std::{
 };
 
 use anyhow::Result;
-use odori::{Agent, AgentRegistry, Providers, Tool};
-use odori_engine::{
-    ConnectTarget, EmbeddedEngineConfig, EmbeddedStorageConfig, Engine, OdoriRuntime, TokeiraConfig,
+use odori::{
+    Agent, AgentRegistry, EmbeddedEngineConfig, EmbeddedStorageConfig, Providers, TokeiraConfig,
+    Tool,
 };
+use odori_engine::{ConnectTarget, Engine, OdoriRuntime};
 use odori_mcp_bridge::BridgeConfig;
 use serde_json::{Value, json};
 

@@ -30,7 +30,7 @@ process one. The shell must keep the directory alive across both processes:
 
 ```console
 state_directory="$(mktemp -d "${TMPDIR:-/tmp}/odori-approval-resume.XXXXXX")"
-cargo run --manifest-path tests/embedded/Cargo.toml --example approval-resume -- \
+cargo run -p odori-examples --example approval-resume -- \
   prepare "$state_directory"
 ```
 
@@ -47,7 +47,7 @@ Review the JSON request, including its exact `after` bytes, then make the
 human decision explicit in process two:
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example approval-resume -- \
+cargo run -p odori-examples --example approval-resume -- \
   resume "$state_directory" --approve plan-v1-fix-increment
 rm -r "$state_directory"
 ```
@@ -82,7 +82,7 @@ session, records two turns, applies once, runs the finish bar once, and reaches
 a terminal workflow result.
 
 ```console
-cargo test --manifest-path tests/embedded/Cargo.toml --test examples \
+cargo test -p odori-embedded-harness --test examples \
   approval_resume_crosses_a_process_boundary --locked -- --exact
 ```
 
@@ -103,4 +103,5 @@ generic support file:
   policies.
 - `scenario/runtime.rs` owns engine snapshot configuration, worker assembly,
   and durable transcript observation.
-- `scenario/workspace.rs` owns the fixture and its persistent filesystem evidence.
+- `scenario/workspace.rs` owns the fixture and its persistent filesystem
+  evidence.

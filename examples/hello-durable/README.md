@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
 Run it with an authenticated Codex CLI (this consumes quota):
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
+cargo run -p odori-examples --example hello-durable
 ```
 
 The executable also accepts `--storage in-memory`, `--storage managed-dsql`,

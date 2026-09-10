@@ -1,19 +1,27 @@
+// The run's narration is the example.
+#![allow(clippy::print_stdout)]
+
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
+use clap::Parser;
 use odori::{
     Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, Providers,
     providers::CodexProvider,
 };
-use odori_embedded_harness::take_storage_flag;
+use odori_dev_support::StorageArgs;
+
+/// A durable single-agent run on the embedded engine, in ~20 lines.
+#[derive(Debug, Parser)]
+#[command(name = "hello-durable")]
+struct Cli {
+    #[command(flatten)]
+    storage: StorageArgs,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let storage = take_storage_flag(&mut arguments)?;
-    if !arguments.is_empty() {
-        bail!("usage: hello-durable [--storage <mode>]");
-    }
+    let storage = Cli::parse().storage.resolve()?;
     // Start the local durable engine that owns this run's history.
     let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig {
         storage,

@@ -1,25 +1,51 @@
-#[path = "scenario/mod.rs"]
-mod scenario;
+use std::path::PathBuf;
 
-use std::path::Path;
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use odori_dev_support::StorageArgs;
+use odori_examples::approval_resume as scenario;
 
-use anyhow::{Result, bail};
-use odori_embedded_harness::take_storage_flag;
+/// Run to a human approval gate, persist, and resume against the same history.
+#[derive(Debug, Parser)]
+#[command(name = "approval-resume")]
+struct Cli {
+    #[command(flatten)]
+    storage: StorageArgs,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Run until the approval gate and persist the waiting state.
+    Prepare {
+        /// Directory the run's state is written to.
+        state_directory: PathBuf,
+    },
+    /// Resume the persisted run with an approved plan hash.
+    Resume {
+        /// Directory a previous `prepare` wrote its state to.
+        state_directory: PathBuf,
+        /// The plan hash being approved, as printed by `prepare`.
+        #[arg(long, value_name = "PLAN_HASH")]
+        approve: String,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let storage = take_storage_flag(&mut arguments)?;
-    match arguments.as_slice() {
-        [command, state] if command == "prepare" => {
-            scenario::prepare_with_storage(Path::new(state), true, storage).await?;
+    let cli = Cli::parse();
+    let storage = cli.storage.resolve()?;
+    match cli.command {
+        Command::Prepare { state_directory } => {
+            scenario::prepare_with_storage(&state_directory, true, storage).await?;
         }
-        [command, state, flag, plan_hash] if command == "resume" && flag == "--approve" => {
-            scenario::resume_with_storage(Path::new(state), plan_hash, true, storage).await?;
+        Command::Resume {
+            state_directory,
+            approve,
+        } => {
+            scenario::resume_with_storage(&state_directory, &approve, true, storage).await?;
         }
-        _ => bail!(
-            "usage:\n  approval-resume [--storage <mode>] prepare <state-directory>\n  approval-resume [--storage <mode>] resume <state-directory> --approve <plan-hash>"
-        ),
     }
     Ok(())
 }

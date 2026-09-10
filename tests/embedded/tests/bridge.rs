@@ -5,7 +5,6 @@
 //! prove fencing. No real harness involved; deterministic by construction.
 
 use std::{
-    net::TcpListener,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering},
@@ -17,33 +16,13 @@ use anyhow::Result;
 use async_trait::async_trait;
 use odori_agents::{
     Agent, AgentRegistry, Providers, Tool,
-    provider::{
-        McpTransport, Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest, TurnTooling,
-    },
+    provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest},
 };
+use odori_dev_support::endpoint;
+use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
 use odori_mcp_bridge::BridgeConfig;
 use serde_json::{Value, json};
-use tokeira_engine::{Engine, TokeiraConfig};
-
-async fn start_engine() -> Result<(Engine, TcpListener, TcpListener)> {
-    let grpc_guard = TcpListener::bind("127.0.0.1:0")?;
-    let nexus_guard = TcpListener::bind("127.0.0.1:0")?;
-    let mut config = TokeiraConfig::default();
-    config.infrastructure.network.grpc_addr = grpc_guard.local_addr()?.to_string();
-    config.policy.nexus_completion.http_addr = nexus_guard.local_addr()?.to_string();
-    let engine = Engine::start_with_config(config).await?;
-    Ok((engine, grpc_guard, nexus_guard))
-}
-
-/// The bridge endpoint and token from a turn's tooling.
-fn endpoint(tooling: &TurnTooling) -> (String, String) {
-    let server = tooling.mcp_servers.first().expect("bridge attached");
-    let McpTransport::Http { url, headers } = &server.transport else {
-        panic!("bridge transport must be HTTP");
-    };
-    (url.clone(), headers[0].1.clone())
-}
 
 /// One MCP `tools/call` as a harness would issue it. Returns the full SSE
 /// body (progress frames included) and the final JSON-RPC frame.
@@ -112,7 +91,7 @@ impl Provider for DyingMcpHarness {
         request: TurnRequest,
         _events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
-        let (url, auth) = endpoint(&request.tooling);
+        let (url, auth) = endpoint(&request.tooling).expect("bridge attached");
         let (body, frame) = mcp_call(&url, &auth, "deploy", "tu-dedupe").await;
         let text = result_text(&frame).expect("tool result");
         self.observed.lock().expect("lock").push(text.clone());
@@ -217,7 +196,7 @@ impl Provider for ZombieMcpHarness {
         request: TurnRequest,
         _events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
-        let (url, auth) = endpoint(&request.tooling);
+        let (url, auth) = endpoint(&request.tooling).expect("bridge attached");
         if request.identity.attempt == 1 {
             let (_, frame) = mcp_call(&url, &auth, "deploy", "tu-a").await;
             result_text(&frame).expect("attempt 1 tool result");
@@ -296,7 +275,12 @@ async fn stale_attempts_are_fenced_but_served_recorded_results() -> Result<()> {
 
     // The same stale token that reached fencing while the workflow was live
     // is evicted only after the workflow close event is observable.
-    let (stale_url, stale_auth) = provider.stale.lock().expect("lock").clone().expect("stashed");
+    let (stale_url, stale_auth) = provider
+        .stale
+        .lock()
+        .expect("lock")
+        .clone()
+        .expect("stashed");
     let mut status = reqwest::StatusCode::OK;
     for _ in 0..100 {
         status = mcp_status(&stale_url, &stale_auth).await;

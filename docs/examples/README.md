@@ -34,7 +34,7 @@ descriptor recovery, IAM requirements, and teardown.
 For example:
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind -- \
+cargo run -p odori-examples --example rewind -- \
   --storage managed-dsql
 ```
 

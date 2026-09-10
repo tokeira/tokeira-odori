@@ -1,28 +1,13 @@
 //! The scripted harness's small HTTP MCP client.
 
-use odori::agents::provider::{McpTransport, TurnError, TurnTooling};
+use odori::agents::provider::{TurnError, TurnTooling};
+use odori_dev_support::endpoint;
 use serde_json::{Value, json};
 
 pub(super) fn tooling(error: impl std::fmt::Display) -> TurnError {
     TurnError::Tooling {
         message: error.to_string(),
     }
-}
-
-fn endpoint(tooling_config: &TurnTooling) -> Result<(String, String), TurnError> {
-    let server = tooling_config
-        .mcp_servers
-        .first()
-        .ok_or_else(|| tooling("the durable bridge was not attached"))?;
-    let McpTransport::Http { url, headers } = &server.transport else {
-        return Err(tooling("the example requires the HTTP bridge"));
-    };
-    let authorization = headers
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
-        .map(|(_, value)| value.clone())
-        .ok_or_else(|| tooling("bridge attachment omitted authorization"))?;
-    Ok((url.clone(), authorization))
 }
 
 pub(super) async fn call_tool(

@@ -38,16 +38,16 @@ ignored-by-default quota gate are unchanged.
 ## Package contents and sizes
 
 The following results came from a per-crate `cargo package --list` pass and
-`cargo package --workspace --offline --allow-dirty --locked --no-verify` on
-2026-08-22.
+`cargo package --offline --allow-dirty --locked --no-verify` on 2026-09-10. The
+bare invocation covers `default-members`, which is exactly the publish closure.
 
 | Crate | Files | Source payload | `.crate` archive |
 | --- | ---: | ---: | ---: |
-| `odori-agents` | 16 | 208.1 KiB | 55,404 bytes (54.1 KiB) |
-| `odori-mcp-bridge` | 11 | 123.7 KiB | 34,126 bytes (33.3 KiB) |
-| `odori-providers` | 18 | 247.0 KiB | 61,020 bytes (59.6 KiB) |
-| `odori-engine` | 6 | 96.8 KiB | 26,597 bytes (26.0 KiB) |
-| `odori` | 8 | 96.5 KiB | 26,722 bytes (26.1 KiB) |
+| `odori-agents` | 17 | 250.5 KiB | 65,949 bytes (64.4 KiB) |
+| `odori-mcp-bridge` | 11 | 123.7 KiB | 34,135 bytes (33.3 KiB) |
+| `odori-providers` | 18 | 283.1 KiB | 70,949 bytes (69.3 KiB) |
+| `odori-engine` | 6 | 181.6 KiB | 47,310 bytes (46.2 KiB) |
+| `odori` | 8 | 175.4 KiB | 45,898 bytes (44.8 KiB) |
 
 No package includes `examples/`, the example fixture projects, `spikes/`, the
 embedded integration harness, repository-wide docs, or the bird artwork. Crate
@@ -60,11 +60,13 @@ tests rather than binary or captured-response fixture bloat.
 | Package | Location | Reason |
 | --- | --- | --- |
 | `codex-driver-spike` | `spikes/codex-driver` | Protocol research with an independent dependency graph |
-| `odori-embedded-harness` | `tests/embedded` | Integration harness with the sibling engine as a Git dependency |
+| `odori-embedded-harness` | `tests/embedded` | Integration harness; a workspace member, but test infrastructure rather than product surface |
+| `odori-dev-support` | `crates/odori-dev-support` | Shared support for the examples and integration tests |
+| `odori-examples` | `examples` | The five runnable examples and the scenario library behind them |
 | `approval-resume-fixture` | `examples/approval-resume/fixture` | Bundled project copied to a temporary directory by the example |
 | `fixture-project` | `examples/slice-fleet/fixture` | Bundled project copied to a temporary directory by the example |
 
-All four declare `publish = false`, a description, Apache-2.0 licence,
+All six declare `publish = false`, a description, Apache-2.0 licence,
 repository, and Rust 1.97 minimum. Keywords, categories, and a crates.io README
 are intentionally not assigned because these packages are outside the publish
 closure.

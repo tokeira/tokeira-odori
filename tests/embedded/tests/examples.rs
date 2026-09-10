@@ -1,15 +1,7 @@
 //! Flagship examples against the real embedded engine. The scripted paths
 //! are unguarded; the real subscription smoke consumes quota and is ignored.
 
-#[path = "../../../examples/approval-resume/scenario/mod.rs"]
-mod approval_resume;
-#[path = "../../../examples/rewind/scenario/mod.rs"]
-mod rewind;
-#[path = "../../../examples/slice-fleet/scenario/mod.rs"]
-mod slice_fleet;
-
 use std::{
-    net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::{
@@ -21,9 +13,10 @@ use std::{
 
 use anyhow::{Context as _, Result, ensure};
 use odori_agents::{Agent, AgentRegistry, Providers, RunConfig};
+use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
+use odori_examples::{approval_resume, rewind, slice_fleet};
 use odori_providers::{ClaudeProvider, CodexProvider};
-use tokeira_engine::{Engine, TokeiraConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn slice_fleet_enforces_the_full_scripted_path() -> Result<()> {
@@ -157,12 +150,7 @@ async fn live_cross_provider_example_smoke() -> Result<()> {
         std::env::var("ODORI_RUN_LIVE_EXAMPLES").as_deref() == Ok("1"),
         "set ODORI_RUN_LIVE_EXAMPLES=1 to confirm quota use"
     );
-    let grpc_guard = TcpListener::bind("127.0.0.1:0")?;
-    let nexus_guard = TcpListener::bind("127.0.0.1:0")?;
-    let mut config = TokeiraConfig::default();
-    config.infrastructure.network.grpc_addr = grpc_guard.local_addr()?.to_string();
-    config.policy.nexus_completion.http_addr = nexus_guard.local_addr()?.to_string();
-    let engine = Engine::start_with_config(config).await?;
+    let (engine, _grpc_guard, _nexus_guard) = start_engine().await?;
     let mut agents = AgentRegistry::new();
     agents.register(
         Agent::new("live-claude", "Reply with exactly: claude-reviewed").with_provider("claude"),

@@ -22,7 +22,7 @@ deliberation; it is not an engine snapshot file.
 ## Run it
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
+cargo run -p odori-examples --example rewind
 ```
 
 Add `-- --storage managed-dsql` for the managed-cluster engine-restart demo,
