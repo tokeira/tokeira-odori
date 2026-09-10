@@ -12,7 +12,7 @@ Run it with a write token from your Logfire project's settings
 
 ```console
 LOGFIRE_TOKEN=<write token> \
-cargo run --manifest-path tests/embedded/Cargo.toml --example logfire
+cargo run -p odori-examples --example logfire
 ```
 
 Then open the project's Live view: the trace is named

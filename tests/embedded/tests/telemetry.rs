@@ -8,13 +8,11 @@
 //! a `tracing-opentelemetry` OTLP layer) would stand; parenting and
 //! attributes are what an OTLP backend receives.
 
-#[path = "../../../examples/logfire/scenario/mod.rs"]
-mod scenario;
-
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result, ensure};
 use odori_engine::EmbeddedStorageConfig;
+use odori_examples::logfire as scenario;
 use tracing::field::{Field, Visit};
 use tracing_subscriber::{Layer, layer::SubscriberExt, registry::LookupSpan};
 
@@ -102,11 +100,14 @@ where
     ) {
         let mut collector = FieldCollector::default();
         event.record(&mut collector);
-        self.events.lock().expect("captured events lock").push(Captured {
-            name: event.metadata().name().to_owned(),
-            parent: event.parent().cloned(),
-            fields: collector.0,
-        });
+        self.events
+            .lock()
+            .expect("captured events lock")
+            .push(Captured {
+                name: event.metadata().name().to_owned(),
+                parent: event.parent().cloned(),
+                fields: collector.0,
+            });
     }
 }
 
@@ -166,14 +167,19 @@ async fn logfire_scenario_emits_the_agent_trace_tree() -> Result<()> {
         .filter(|(_, span)| span.name == "chat")
         .collect();
     turns.sort_by_key(|(_, span)| field(span, "odori.turn").map(str::to_owned));
-    ensure!(turns.len() == 2, "expected two turn spans, saw {}", turns.len());
+    ensure!(
+        turns.len() == 2,
+        "expected two turn spans, saw {}",
+        turns.len()
+    );
     for (index, (_, turn)) in turns.iter().enumerate() {
         ensure!(turn.parent.as_ref() == Some(run_id));
         ensure!(field(turn, "odori.turn") == Some(index.to_string().as_str()));
         ensure!(field(turn, "gen_ai.system") == Some("logfire-scripted"));
         ensure!(field(turn, "gen_ai.provider.name") == Some("logfire-scripted"));
         ensure!(
-            field(turn, "gen_ai.conversation.id") == Some(format!("logfire-session-{index}").as_str())
+            field(turn, "gen_ai.conversation.id")
+                == Some(format!("logfire-session-{index}").as_str())
         );
         ensure!(field(turn, "otel.status_code") == Some("OK"));
     }
@@ -184,7 +190,11 @@ async fn logfire_scenario_emits_the_agent_trace_tree() -> Result<()> {
         .iter()
         .filter(|(_, span)| span.name == "execute_tool")
         .collect();
-    ensure!(tools.len() == 1, "expected one tool span, saw {}", tools.len());
+    ensure!(
+        tools.len() == 1,
+        "expected one tool span, saw {}",
+        tools.len()
+    );
     let (_, tool) = tools[0];
     ensure!(tool.parent == Some(turns[0].0.clone()));
     ensure!(field(tool, "gen_ai.tool.name") == Some("save_note"));

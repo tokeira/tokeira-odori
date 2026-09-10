@@ -24,15 +24,9 @@ documented in the [framework guides](docs/README.md).
 
 ## Quality Bar
 
-Run the complete local finish bar before every push or pull request:
-
-```bash
-cargo +nightly fmt --all
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo nextest run --workspace --locked
-cargo test --workspace --doc --locked
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
-```
+Run the complete local finish bar in
+[AGENTS.md](AGENTS.md#finish-green--the-bar) before every push or pull request.
+That file is the authoritative command list.
 
 Run `cargo deny check bans licenses sources` whenever a change moves a
 dependency. Keep `--locked` on build and test commands: dependency movement is

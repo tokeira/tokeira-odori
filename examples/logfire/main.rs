@@ -1,8 +1,19 @@
-#[path = "scenario/mod.rs"]
-mod scenario;
+// The run's narration is the example. `unsafe`: the logfire SDK takes its
+// per-target filter only from RUST_LOG — see the SAFETY note at the call site.
+#![allow(unsafe_code, clippy::print_stdout)]
 
 use anyhow::{Context as _, Result, bail};
-use odori_embedded_harness::take_storage_flag;
+use clap::Parser;
+use odori_dev_support::StorageArgs;
+use odori_examples::logfire as scenario;
+
+/// Export one run's agent-semantic spans to Logfire.
+#[derive(Debug, Parser)]
+#[command(name = "logfire")]
+struct Cli {
+    #[command(flatten)]
+    storage: StorageArgs,
+}
 
 /// Spans below `warn` are exported only for Odori's agent-semantic layer.
 ///
@@ -15,11 +26,7 @@ use odori_embedded_harness::take_storage_flag;
 const REDACTED_EXPORT_FILTER: &str = "warn,odori_agents=info";
 
 fn main() -> Result<()> {
-    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let storage = take_storage_flag(&mut arguments)?;
-    if !arguments.is_empty() {
-        bail!("usage: logfire [--storage <mode>]");
-    }
+    let storage = Cli::parse().storage.resolve()?;
 
     // This example exists to land a trace in Logfire; running without the
     // token would "succeed" while demonstrating nothing. No fallback.

@@ -43,7 +43,6 @@ pub struct FleetReport {
 /// Run the complete fleet with a scripted harness over the real embedded
 /// engine and HTTP bridge. Every signal, child workflow, update, and tool
 /// result is real; only model choice is scripted for determinism.
-#[allow(dead_code)] // The integration target uses the default; the CLI selects storage.
 pub async fn run_scripted_fleet(print: bool) -> Result<FleetReport> {
     run_scripted_fleet_with_storage(print, EmbeddedStorageConfig::InMemory).await
 }

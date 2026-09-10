@@ -3,8 +3,11 @@
 //! spend real API credit):
 //!
 //! ```console
-//! cargo test --manifest-path tests/embedded/Cargo.toml --test api_live -- --ignored
+//! cargo test -p odori-embedded-harness --test api_live -- --ignored
 //! ```
+
+// Progress reporting: these runs spend real API credit.
+#![allow(clippy::print_stdout)]
 
 use odori_agents::provider::{
     AgentDirectives, Provider, SessionDirective, TurnEventSink, TurnIdentity, TurnRequest,

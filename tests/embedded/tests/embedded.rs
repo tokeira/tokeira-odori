@@ -9,7 +9,6 @@
 //! report, not to paper over.
 
 use std::{
-    net::TcpListener,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -17,41 +16,14 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use odori_agents::{
-    Agent, AgentRegistry, Guardrail, GuardrailVerdict, Json, Providers, RunBudget, RunConfig,
-    RunEnd, RunnerError,
+    Agent, AgentRegistry, Guardrail, GuardrailVerdict, Json, RunBudget, RunConfig, RunEnd,
+    RunnerError,
     provider::{
         Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
         TurnUsage,
     },
 };
-use odori_engine::{ConnectTarget, OdoriRuntime};
-use tokeira_engine::{Engine, TokeiraConfig};
-
-/// Start a zero-listener engine, with sentinel ports proving an accidental
-/// TCP fallback would fail deterministically (engine-repo spike trick).
-async fn start_engine() -> Result<(Engine, TcpListener, TcpListener)> {
-    let grpc_guard = TcpListener::bind("127.0.0.1:0")?;
-    let nexus_guard = TcpListener::bind("127.0.0.1:0")?;
-    let mut config = TokeiraConfig::default();
-    config.infrastructure.network.grpc_addr = grpc_guard.local_addr()?.to_string();
-    config.policy.nexus_completion.http_addr = nexus_guard.local_addr()?.to_string();
-    let engine = Engine::start_with_config(config).await?;
-    Ok((engine, grpc_guard, nexus_guard))
-}
-
-async fn start_runtime(
-    engine: &Engine,
-    task_queue: &str,
-    registry: AgentRegistry,
-    provider: Arc<dyn Provider>,
-) -> Result<OdoriRuntime> {
-    OdoriRuntime::builder(task_queue)
-        .connect(ConnectTarget::service_override(engine.service_override()))
-        .agents(registry)
-        .providers(Providers::new(provider))
-        .start()
-        .await
-}
+use odori_embedded_harness::{start_engine, start_runtime};
 
 /// A scripted provider: records every request it receives and answers from
 /// a queue of behaviours (or echoes by default).
@@ -391,8 +363,7 @@ async fn budget_and_guardrails_end_runs_typed() -> Result<()> {
     let mut registry = AgentRegistry::new();
     registry.register(Agent::new("guarded", "be safe").with_input_guardrail(NoPirates));
     registry.register(
-        Agent::new("capped", "stop on time")
-            .with_budget(RunBudget::unlimited().with_max_turns(1)),
+        Agent::new("capped", "stop on time").with_budget(RunBudget::unlimited().with_max_turns(1)),
     );
     let provider = ScriptedProvider::scripted(Vec::new());
     let runtime = start_runtime(&engine, "tq-guard", registry, provider.clone()).await?;

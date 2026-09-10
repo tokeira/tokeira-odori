@@ -1,0 +1,64 @@
+# One directory per example, holding whatever it needs — `main.rs`, a README,
+# and where there is one, its `scenario/` and its fixture. The scenarios live in
+# the library so each compiles once, under a single identity, for both the
+# example that runs it and the test that asserts on it.
+#
+# Built on Odori's published crates, except rewind's `observation.rs`: reading
+# durable activity attempts has no Odori-level API yet, hence `temporalio-client`.
+[package]
+name = "odori-examples"
+description = "Runnable Odori examples and the scenarios behind them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+# Declared: auto-discovery would split each example across `src/` and `examples/`.
+[lib]
+path = "lib.rs"
+
+[[example]]
+name = "hello-durable"
+path = "hello-durable/main.rs"
+
+[[example]]
+name = "rewind"
+path = "rewind/main.rs"
+
+[[example]]
+name = "slice-fleet"
+path = "slice-fleet/main.rs"
+
+[[example]]
+name = "approval-resume"
+path = "approval-resume/main.rs"
+
+[[example]]
+name = "logfire"
+path = "logfire/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { workspace = true }
+odori = { workspace = true }
+odori-agents = { workspace = true }
+odori-dev-support = { workspace = true }
+odori-engine = { workspace = true, features = ["preview"] }
+odori-mcp-bridge = { workspace = true, features = ["preview"] }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+temporalio-client = { workspace = true }
+tokio = { workspace = true }
+
+# The `logfire` example target only — and example targets may use dev-deps.
+[dev-dependencies]
+logfire = { workspace = true }
+
+[lints]
+workspace = true

@@ -38,7 +38,6 @@ pub struct RewindReport {
 /// from the invocation registry. Then use the successful deliberation as one
 /// immutable snapshot for two new workflows with deliberately different
 /// decisions.
-#[allow(dead_code)] // The integration target uses the default; the CLI selects storage.
 pub async fn run_rewind(print: bool) -> Result<RewindReport> {
     run_rewind_with_storage(print, EmbeddedStorageConfig::InMemory).await
 }

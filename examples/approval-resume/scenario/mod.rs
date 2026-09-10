@@ -3,7 +3,6 @@
 //! Process one records a proposal and snapshots a live workflow. Process two
 //! restores that workflow, records the human decision, and completes the
 //! approved durable tools.
-#![allow(dead_code)] // The CLI and integration test consume different report surfaces.
 
 mod model;
 mod provider;

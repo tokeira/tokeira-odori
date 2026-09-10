@@ -3,6 +3,9 @@
 //! The in-memory legs are ordinary unguarded tests. The two DSQL legs are
 //! ignored and separately environment-authorized because they use live AWS.
 
+// Progress reporting: these runs take minutes against live DSQL clusters.
+#![allow(clippy::print_stdout)]
+
 use std::{
     collections::BTreeMap,
     net::TcpListener,
@@ -17,14 +20,15 @@ use std::{
 use anyhow::{Context as _, Result, ensure};
 use async_trait::async_trait;
 use odori_agents::{
-    Agent, AgentRegistry, Providers,
+    Agent, AgentRegistry,
     provider::{Provider, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest},
 };
+use odori_embedded_harness::start_runtime;
 use odori_engine::{
-    ConnectTarget, DsqlMigrationPolicy, EmbeddedDsqlLimits, EmbeddedEngineConfig,
-    EmbeddedEngineStartError, EmbeddedStorageConfig, EmbeddedStorageMode, Engine,
-    ExistingEmbeddedDsqlConfig, ManagedClusterIntent, ManagedEmbeddedDsqlConfig, OdoriRuntime,
-    SnapshotPolicyConfig, TokeiraConfig,
+    DsqlMigrationPolicy, EmbeddedDsqlLimits, EmbeddedEngineConfig, EmbeddedEngineStartError,
+    EmbeddedStorageConfig, EmbeddedStorageMode, Engine, ExistingEmbeddedDsqlConfig,
+    ManagedClusterIntent, ManagedEmbeddedDsqlConfig, OdoriRuntime, SnapshotPolicyConfig,
+    TokeiraConfig,
 };
 use tokeira_managed_dsql::{
     AdminDeadline, AwsDsqlControlPlane, ClusterDescriptorState, ClusterDescriptorStore,
@@ -111,19 +115,6 @@ fn config_with_unique_ports(storage: EmbeddedStorageConfig) -> Result<EmbeddedEn
     })
 }
 
-async fn start_runtime(
-    engine: &Engine,
-    task_queue: &str,
-    provider: Arc<RestartProvider>,
-) -> Result<OdoriRuntime> {
-    OdoriRuntime::builder(task_queue)
-        .connect(ConnectTarget::service_override(engine.service_override()))
-        .agents(registry())
-        .providers(Providers::new(provider))
-        .start()
-        .await
-}
-
 fn unique_id(prefix: &str) -> String {
     let epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -166,7 +157,13 @@ async fn exercise_durable_restart(
         first_engine.startup_elapsed()
     );
     let first_provider = Arc::new(RestartProvider::default());
-    let first_runtime = start_runtime(&first_engine, &task_queue, first_provider.clone()).await?;
+    let first_runtime = start_runtime(
+        &first_engine,
+        &task_queue,
+        registry(),
+        first_provider.clone(),
+    )
+    .await?;
     let conversation = first_runtime
         .runner()
         .start_conversation("restart-agent", "record the durable marker", &run_id)
@@ -205,7 +202,13 @@ async fn exercise_durable_restart(
         restarted.startup_elapsed()
     );
     let replacement_provider = Arc::new(RestartProvider::default());
-    let replacement = start_runtime(&restarted, &task_queue, replacement_provider.clone()).await?;
+    let replacement = start_runtime(
+        &restarted,
+        &task_queue,
+        registry(),
+        replacement_provider.clone(),
+    )
+    .await?;
     let restored = replacement.runner().resume_conversation(&run_id);
     let transcript = restored.transcript().await?;
     ensure!(transcript.len() == 1);
@@ -264,7 +267,13 @@ async fn in_memory_snapshot_preserves_a_live_run_across_engine_restart() -> Resu
     let task_queue = unique_id("odori-snapshot-queue");
     let run_id = unique_id("odori-snapshot-run");
     let first_provider = Arc::new(RestartProvider::default());
-    let first_runtime = start_runtime(&first_engine, &task_queue, first_provider.clone()).await?;
+    let first_runtime = start_runtime(
+        &first_engine,
+        &task_queue,
+        registry(),
+        first_provider.clone(),
+    )
+    .await?;
     let conversation = first_runtime
         .runner()
         .start_conversation("restart-agent", "record the snapshot marker", &run_id)
@@ -289,7 +298,13 @@ async fn in_memory_snapshot_preserves_a_live_run_across_engine_restart() -> Resu
     });
     let restarted = Engine::start_with_embedded_config(restart_config).await?;
     let replacement_provider = Arc::new(RestartProvider::default());
-    let replacement = start_runtime(&restarted, &task_queue, replacement_provider.clone()).await?;
+    let replacement = start_runtime(
+        &restarted,
+        &task_queue,
+        registry(),
+        replacement_provider.clone(),
+    )
+    .await?;
     let restored = replacement.runner().resume_conversation(&run_id);
     let transcript = restored.transcript().await?;
     ensure!(transcript.len() == 1);

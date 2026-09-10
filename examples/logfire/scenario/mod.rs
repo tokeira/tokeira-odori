@@ -11,15 +11,13 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use odori::{
-    Agent, AgentRegistry, Providers, RunOutput, Tool,
+    Agent, AgentRegistry, EmbeddedEngineConfig, Engine, Providers, RunOutput, TokeiraConfig, Tool,
     agents::provider::{
         McpTransport, Provider, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
         TurnTooling, TurnUsage,
     },
 };
-use odori_engine::{
-    ConnectTarget, EmbeddedEngineConfig, EmbeddedStorageConfig, Engine, OdoriRuntime, TokeiraConfig,
-};
+use odori_engine::{ConnectTarget, EmbeddedStorageConfig, OdoriRuntime};
 use odori_mcp_bridge::BridgeConfig;
 use serde_json::{Value, json};
 
@@ -221,7 +219,11 @@ pub async fn run_scripted_conversation(storage: EmbeddedStorageConfig) -> Result
 
     let conversation = runtime
         .runner()
-        .start_conversation("day-planner", "Plan tomorrow's stargazing trip.", "logfire-1")
+        .start_conversation(
+            "day-planner",
+            "Plan tomorrow's stargazing trip.",
+            "logfire-1",
+        )
         .await?;
     conversation.send("Anything left before sunset?").await?;
     let output = conversation.end().await?;

@@ -12,7 +12,7 @@ the pinned, authenticated CLI described in the [provider guide](../providers.md#
 ## Run it
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example hello-durable
+cargo run -p odori-examples --example hello-durable
 ```
 
 The optional `-- --storage <mode>` flag selects one of the three modes listed
