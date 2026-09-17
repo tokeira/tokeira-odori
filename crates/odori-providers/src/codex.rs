@@ -18,7 +18,7 @@ use std::{
     collections::{HashSet, VecDeque},
     io,
     path::{Path, PathBuf},
-    process::{ExitStatus, Stdio},
+    process::ExitStatus,
     time::Duration,
 };
 
@@ -28,10 +28,10 @@ use odori_agents::provider::{
     TurnEventSink, TurnOutcome, TurnRequest, TurnTooling, TurnUsage,
 };
 use serde_json::{Map, Value, json};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
-};
+use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
+
+use crate::harness::{HarnessError, HarnessHandle, HarnessLauncher};
 
 /// Exact CLI pin used for app-server and MCP conformance tests.
 pub const EXPECTED_CODEX_CLI_VERSION: &str = "codex-cli 0.148.0-alpha.15";
@@ -313,10 +313,10 @@ async fn run_app_server(
             if status == "completed" {
                 let mut outcome = TurnOutcome::new(session_id, final_text.unwrap_or_default());
                 outcome.usage = usage;
-                let (exit, stderr) = process.finish(false).await;
-                if !exit.as_ref().is_some_and(ExitStatus::success) {
+                let (exit, stderr) = process.finish(false).await.map_err(harness_drop_error)?;
+                if !exit.success() {
                     tracing::warn!(
-                        exit_code = ?exit.and_then(|status| status.code()),
+                        exit_code = ?exit.code(),
                         stderr_head = stderr_head(&stderr),
                         "Codex app-server exited non-zero after terminal turn completion"
                     );
@@ -325,7 +325,7 @@ async fn run_app_server(
             }
             let terminal_error = message.pointer("/params/turn/error").cloned();
             let error = classify_terminal_error(status, terminal_error.as_ref());
-            let _ = process.finish(false).await;
+            process.finish(false).await.map_err(harness_drop_error)?;
             return Err(error);
         }
     }
@@ -634,10 +634,8 @@ enum DriverPhase {
 }
 
 struct AppServerProcess {
-    child: Child,
-    input: Option<ChildStdin>,
-    lines: Lines<BufReader<ChildStdout>>,
-    stderr_task: tokio::task::JoinHandle<String>,
+    harness: HarnessHandle<Value, Value>,
+    cancellation: CancellationToken,
     pending: VecDeque<Value>,
     next_id: u64,
 }
@@ -647,48 +645,20 @@ impl AppServerProcess {
         let mut command_line = command_with_hygiene(command);
         command_line
             .args(["app-server", "--listen", "stdio://", "--strict-config"])
-            .envs(env.iter().cloned())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut child = command_line
-            .spawn()
+            .envs(env.iter().cloned());
+        let cancellation = CancellationToken::new();
+        let harness = HarnessLauncher::launch(command_line, cancellation.clone())
             .map_err(|error| command_error(command, "start app-server", error))?;
-        let input = child.stdin.take().ok_or_else(|| TurnError::Config {
-            message: "Codex app-server stdin was not piped".into(),
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| TurnError::Config {
-            message: "Codex app-server stdout was not piped".into(),
-        })?;
-        let mut stderr = child.stderr.take().ok_or_else(|| TurnError::Config {
-            message: "Codex app-server stderr was not piped".into(),
-        })?;
-        let stderr_task = tokio::spawn(async move {
-            let mut text = String::new();
-            let _ = stderr.read_to_string(&mut text).await;
-            text
-        });
         Ok(Self {
-            child,
-            input: Some(input),
-            lines: BufReader::new(stdout).lines(),
-            stderr_task,
+            harness,
+            cancellation,
             pending: VecDeque::new(),
             next_id: 1,
         })
     }
 
     async fn send(&mut self, value: &Value) -> Result<(), DriverError> {
-        let mut bytes = serde_json::to_vec(value)?;
-        bytes.push(b'\n');
-        let input = self
-            .input
-            .as_mut()
-            .ok_or_else(|| DriverError::Protocol("app-server stdin is already closed".into()))?;
-        input.write_all(&bytes).await?;
-        input.flush().await?;
-        Ok(())
+        self.harness.send(value.clone()).await.map_err(driver_error)
     }
 
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), DriverError> {
@@ -740,8 +710,11 @@ impl AppServerProcess {
     }
 
     async fn read_wire_message(&mut self) -> Result<Value, DriverError> {
-        let line = self.lines.next_line().await?.ok_or(DriverError::Eof)?;
-        Ok(serde_json::from_str(&line)?)
+        self.harness
+            .next_event()
+            .await
+            .ok_or(DriverError::Eof)?
+            .map_err(driver_error)
     }
 
     async fn reject_server_request(&mut self, message: &Value) -> Result<(), DriverError> {
@@ -760,22 +733,38 @@ impl AppServerProcess {
         Ok(())
     }
 
-    async fn finish(mut self, force_kill: bool) -> (Option<ExitStatus>, String) {
-        self.input.take();
+    async fn finish(mut self, force_kill: bool) -> Result<(ExitStatus, String), HarnessError> {
         let status = if force_kill {
-            self.child.start_kill().ok();
-            self.child.wait().await.ok()
+            self.cancellation.cancel();
+            self.harness.wait().await?
         } else {
-            match tokio::time::timeout(APP_SERVER_SHUTDOWN_GRACE, self.child.wait()).await {
-                Ok(status) => status.ok(),
+            match tokio::time::timeout(APP_SERVER_SHUTDOWN_GRACE, self.harness.wait()).await {
+                Ok(status) => status?,
                 Err(_) => {
-                    self.child.start_kill().ok();
-                    self.child.wait().await.ok()
+                    self.cancellation.cancel();
+                    self.harness.wait().await?
                 }
             }
         };
-        let stderr = self.stderr_task.await.unwrap_or_default();
-        (status, stderr)
+        self.cancellation.cancel();
+        let stderr = self.harness.collect_stderr().await?;
+        Ok((status, stderr))
+    }
+}
+
+fn driver_error(error: HarnessError) -> DriverError {
+    match error {
+        HarnessError::Decode { source, .. } | HarnessError::Encode(source) => {
+            DriverError::Json(source)
+        }
+        HarnessError::Io(source) => DriverError::Io(source),
+        HarnessError::Task(source) => {
+            DriverError::Protocol(format!("harness I/O task failed: {source}"))
+        }
+        HarnessError::Eof => DriverError::Eof,
+        HarnessError::StdinClosed => {
+            DriverError::Protocol("app-server stdin is already closed".into())
+        }
     }
 }
 
@@ -784,7 +773,10 @@ async fn finish_driver_error(
     error: DriverError,
     phase: DriverPhase,
 ) -> TurnError {
-    let (status, stderr) = process.finish(true).await;
+    let (status, stderr) = match process.finish(true).await {
+        Ok(result) => result,
+        Err(error) => return harness_drop_error(error),
+    };
     match error {
         DriverError::Rpc(error) => classify_rpc_error(error, phase),
         DriverError::Protocol(message) => TurnError::Config {
@@ -795,18 +787,24 @@ async fn finish_driver_error(
         },
         DriverError::Io(error) if error.kind() == io::ErrorKind::BrokenPipe => {
             TurnError::HarnessDied {
-                exit_code: status.and_then(|status| status.code()),
+                exit_code: status.code(),
                 stderr_head: stderr_head(&stderr).to_owned(),
             }
         }
         DriverError::Io(error) => TurnError::HarnessDied {
-            exit_code: status.and_then(|status| status.code()),
+            exit_code: status.code(),
             stderr_head: format!("{}: {error}", stderr_head(&stderr)),
         },
         DriverError::Eof => TurnError::HarnessDied {
-            exit_code: status.and_then(|status| status.code()),
+            exit_code: status.code(),
             stderr_head: stderr_head(&stderr).to_owned(),
         },
+    }
+}
+
+fn harness_drop_error(error: HarnessError) -> TurnError {
+    TurnError::Config {
+        message: format!("failed to finish the harness process: {error}"),
     }
 }
 

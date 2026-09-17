@@ -30,6 +30,7 @@ pub mod api;
 pub mod claude;
 pub mod claude_flags;
 pub mod codex;
+mod harness;
 
 #[cfg(feature = "api-anthropic")]
 pub use api::anthropic::{AnthropicConfig, AnthropicProvider};

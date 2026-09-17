@@ -35,13 +35,13 @@ use odori_agents::provider::{
     Effort, Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent, TurnEventSink,
     TurnOutcome, TurnRequest, TurnUsage,
 };
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
-    process::Command,
-    sync::OnceCell,
-};
+use tokio::{process::Command, sync::OnceCell};
+use tokio_util::sync::CancellationToken;
 
-use crate::claude_flags::render_tooling;
+use crate::{
+    claude_flags::render_tooling,
+    harness::{HarnessError, HarnessLauncher},
+};
 use events::{ContentBlock, RateLimitInfo, ResultEvent, StreamEvent, UserBlock};
 
 /// The Claude Code version this provider is conformance-tested against.
@@ -213,10 +213,6 @@ impl ClaudeProvider {
         for (name, value) in &self.config.extra_env {
             cmd.env(name, value);
         }
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
         Ok(cmd)
     }
 }
@@ -263,23 +259,12 @@ impl Provider for ClaudeProvider {
         let deadline = request.deadline.unwrap_or(self.config.default_deadline);
         let started = Instant::now();
 
-        let mut child = self
-            .build_command(&request)?
-            .spawn()
-            .map_err(|error| missing_harness(&self.config.binary, &error))?;
-        let stdout = child
-            .stdout
-            .take()
-            .unwrap_or_else(|| unreachable!("stdout piped"));
-        let mut stderr = child
-            .stderr
-            .take()
-            .unwrap_or_else(|| unreachable!("stderr piped"));
-        let stderr_task = tokio::spawn(async move {
-            let mut captured = String::new();
-            let _ = stderr.read_to_string(&mut captured).await;
-            captured
-        });
+        let cancellation = CancellationToken::new();
+        let mut harness = HarnessLauncher::launch::<StreamEvent, serde_json::Value>(
+            self.build_command(&request)?,
+            cancellation.clone(),
+        )
+        .map_err(|error| missing_harness(&self.config.binary, &error))?;
 
         // Stream state: the terminal result, the session id, and the bridge
         // tool calls still awaiting their `tool_result` (for the
@@ -287,26 +272,27 @@ impl Provider for ClaudeProvider {
         let mut terminal: Option<ResultEvent> = None;
         let mut session_id: Option<String> = None;
         let mut pending_bridge_calls: HashSet<String> = HashSet::new();
-        let mut lines = BufReader::new(stdout).lines();
         let timed_out = loop {
             let remaining = deadline.saturating_sub(started.elapsed());
-            let line = match tokio::time::timeout(remaining, lines.next_line()).await {
+            let event = match tokio::time::timeout(remaining, harness.next_event()).await {
                 Err(_elapsed) => {
-                    child.start_kill().ok();
+                    cancellation.cancel();
                     break true;
                 }
-                Ok(Err(_read_error)) => break false,
-                Ok(Ok(None)) => break false,
-                Ok(Ok(Some(line))) => line,
+                Ok(None | Some(Err(HarnessError::Eof | HarnessError::Io(_)))) => break false,
+                Ok(Some(Err(HarnessError::Decode { line, .. }))) => {
+                    if !line.trim().is_empty() {
+                        // Protocol drift tolerance: unparsable lines are liveness.
+                        events.emit(TurnEvent::Liveness);
+                    }
+                    continue;
+                }
+                Ok(Some(Err(
+                    HarnessError::Encode(_) | HarnessError::Task(_) | HarnessError::StdinClosed,
+                ))) => break false,
+                Ok(Some(Ok(event))) => event,
             };
-            if line.trim().is_empty() {
-                continue;
-            }
             events.emit(TurnEvent::Liveness);
-            let Ok(event) = serde_json::from_str::<StreamEvent>(&line) else {
-                // Protocol drift tolerance: unparsable lines are liveness.
-                continue;
-            };
             match event {
                 StreamEvent::System(system) => {
                     if system.subtype == "init"
@@ -355,10 +341,16 @@ impl Provider for ClaudeProvider {
             }
         };
 
-        let status = child.wait().await.map_err(|error| TurnError::Config {
+        let status = harness.wait().await.map_err(|error| TurnError::Config {
             message: format!("failed to join the harness process: {error}"),
         })?;
-        let stderr_text = stderr_task.await.unwrap_or_default();
+        cancellation.cancel();
+        let stderr_text = harness
+            .collect_stderr()
+            .await
+            .map_err(|error| TurnError::Config {
+                message: format!("failed to collect harness stderr: {error}"),
+            })?;
         let stderr_head = stderr_text.lines().next().unwrap_or_default().to_owned();
 
         if timed_out {
