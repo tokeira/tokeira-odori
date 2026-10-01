@@ -19,7 +19,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
@@ -81,11 +81,11 @@ uuid = { version = "1.10", features = ["serde", "v4"] }
 
 # Internal crates carry an explicit version so intra-workspace requirements
 # stay publishable (and cargo-deny's wildcard ban stays meaningful).
-odori = { path = "crates/odori", version = "0.1.1" }
-odori-agents = { path = "crates/odori-agents", version = "0.1.1" }
-odori-providers = { path = "crates/odori-providers", version = "0.1.1" }
-odori-engine = { path = "crates/odori-engine", version = "0.1.1" }
-odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.1" }
+odori = { path = "crates/odori", version = "0.2.0" }
+odori-agents = { path = "crates/odori-agents", version = "0.2.0" }
+odori-providers = { path = "crates/odori-providers", version = "0.2.0" }
+odori-engine = { path = "crates/odori-engine", version = "0.2.0" }
+odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.2.0" }
 
 
 # Mechanized AGENTS.md rules: prose rules drift under a fluid codebase;

@@ -2787,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "odori"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "odori-agents",
  "odori-engine",
@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "odori-agents"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "odori-engine"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "odori-agents",
@@ -2858,7 +2858,7 @@ dependencies = [
 
 [[package]]
 name = "odori-mcp-bridge"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2881,7 +2881,7 @@ dependencies = [
 
 [[package]]
 name = "odori-providers"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "futures",
