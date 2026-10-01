@@ -835,10 +835,12 @@ fn turn_activity_options(config: &RunConfig) -> ActivityOptions {
 
 fn tool_activity_options(policy: &ToolPolicy) -> ActivityOptions {
     let close_timeouts = match policy.schedule_to_close {
-        Some(schedule_to_close) => temporalio_common::ActivityCloseTimeouts::Both {
-            schedule_to_close,
-            start_to_close: policy.start_to_close,
-        },
+        Some(schedule_to_close) => {
+            temporalio_common::ActivityCloseTimeouts::ScheduleAndStartToClose {
+                schedule_to_close,
+                start_to_close: policy.start_to_close,
+            }
+        }
         None => temporalio_common::ActivityCloseTimeouts::StartToClose(policy.start_to_close),
     };
     ActivityOptions::with_close_timeouts(close_timeouts)

@@ -10,10 +10,9 @@
 use std::fmt;
 
 use temporalio_client::{
-    Client, WorkflowGetResultOptions, WorkflowQueryOptions, WorkflowSignalOptions,
-    WorkflowStartOptions,
+    Client, WorkflowGetResultOptions, WorkflowIdConflictPolicy, WorkflowQueryOptions,
+    WorkflowSignalOptions, WorkflowStartOptions,
 };
-use temporalio_common::protos::temporal::api::enums::v1::WorkflowIdConflictPolicy;
 use temporalio_sdk::WorkerOptionsBuilder;
 use thiserror::Error;
 
@@ -136,17 +135,19 @@ impl Runner {
                 ),
             )
             .await;
-        let handle = match started {
-            Ok(handle) => handle,
-            Err(error) => {
-                telemetry.record_client_failure();
-                return Err(RunnerError::Client {
-                    message: error.to_string(),
-                });
-            }
-        };
+        if let Err(error) = started {
+            telemetry.record_client_failure();
+            return Err(RunnerError::Client {
+                message: error.to_string(),
+            });
+        }
+        // The handle `start_workflow` returns is typed by the run method's
+        // private definition type, which cannot be named outside `run`. A
+        // conversation therefore always holds the workflow-id-bound handle —
+        // the same kind `resume_conversation` reconstructs — so a conversation
+        // behaves identically whether it was started here or reattached.
         Ok(Conversation {
-            handle,
+            handle: self.client.get_workflow_handle::<AgentRun>(run_id),
             telemetry: Some(telemetry),
         })
     }
@@ -160,9 +161,7 @@ impl Runner {
     /// the conversation.
     pub fn resume_conversation(&self, run_id: &str) -> Conversation {
         Conversation {
-            handle: self.client.get_workflow_handle::<
-                <AgentRun as temporalio_workflow::runtime::entry::WorkflowImplementation>::Run,
-            >(run_id),
+            handle: self.client.get_workflow_handle::<AgentRun>(run_id),
             telemetry: None,
         }
     }
@@ -228,10 +227,7 @@ impl Runner {
 
 /// A live interactive run.
 pub struct Conversation {
-    handle: temporalio_client::WorkflowHandle<
-        Client,
-        <AgentRun as temporalio_workflow::runtime::entry::WorkflowImplementation>::Run,
-    >,
+    handle: temporalio_client::WorkflowHandle<Client, AgentRun>,
     /// The run span held open for the conversation's lifetime. Present only
     /// on the process that started the conversation; a reattached handle
     /// follows the run without one.

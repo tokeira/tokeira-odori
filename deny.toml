@@ -45,12 +45,9 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 [sources]
-# Crates.io plus the reviewed Tokeira engine and Temporal SDK fix repositories.
-# Both git sources remain commit-pinned in Cargo.toml; other sources are denied.
+# Crates.io only: the engine and the Temporal Rust SDK both resolve from the
+# registry, so a reappearing git dependency is a reviewable event, not drift.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [
-    "ssh://git@github.com/tokeira/tokeira.git",
-    "https://github.com/tokeira/sdk-rust.git",
-]
+allow-git = []
