@@ -1,130 +1,42 @@
-//! Integration harness for the Odori primitives against embedded tokeira.
-//!
-//! Scenario implementations live beside their example entry points. This
-//! crate only owns the shared storage-mode CLI boundary.
+//! Support for the integration tests in `tests/`. Shared machinery lives in
+//! `odori-dev-support`; this crate supplies the harness's in-memory default.
 
-use std::{collections::BTreeMap, error::Error, fmt, path::PathBuf};
+use std::{net::TcpListener, sync::Arc};
 
+use anyhow::Result;
+use odori_agents::{AgentRegistry, Providers, provider::Provider};
 use odori_engine::{
-    DsqlMigrationPolicy, EmbeddedDsqlLimits, EmbeddedStorageConfig, ExistingEmbeddedDsqlConfig,
-    ManagedClusterIntent, ManagedEmbeddedDsqlConfig,
+    ConnectTarget, EmbeddedEngineConfig, EmbeddedStorageConfig, Engine, OdoriRuntime, TokeiraConfig,
 };
 
-/// A factual `--storage` argument or environment error for an example.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageArgumentError(String);
-
-impl fmt::Display for StorageArgumentError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl Error for StorageArgumentError {}
-
-fn required_environment(name: &str) -> Result<String, StorageArgumentError> {
-    std::env::var(name).map_err(|_| {
-        StorageArgumentError(format!(
-            "{name} must be set for the selected DSQL storage mode"
-        ))
+/// Start the embedded engine with the integration harness's in-memory default.
+pub async fn start_engine() -> Result<(Engine, TcpListener, TcpListener)> {
+    let grpc_guard = TcpListener::bind("127.0.0.1:0")?;
+    let nexus_guard = TcpListener::bind("127.0.0.1:0")?;
+    let mut config = TokeiraConfig::default();
+    config.infrastructure.network.grpc_addr = grpc_guard.local_addr()?.to_string();
+    config.policy.nexus_completion.http_addr = nexus_guard.local_addr()?.to_string();
+    let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig {
+        server: config,
+        storage: EmbeddedStorageConfig::InMemory,
+        ..EmbeddedEngineConfig::default()
     })
+    .await?;
+    Ok((engine, grpc_guard, nexus_guard))
 }
 
-/// Remove `--storage <mode>` from an example's arguments and return E1's
-/// storage configuration unchanged.
-///
-/// The default is `in-memory`. `managed-dsql` reads `ODORI_DSQL_REGION` and
-/// `ODORI_DSQL_DESCRIPTOR_PATH`. `adopt-existing-endpoint` additionally reads
-/// `ODORI_DSQL_CLUSTER_ID`, `ODORI_DSQL_CLUSTER_ARN`, `ODORI_DSQL_ENDPOINT`,
-/// and an explicit `ODORI_DSQL_MIGRATION_POLICY` (`automatic` or
-/// `validate-only`).
-pub fn take_storage_flag(
-    arguments: &mut Vec<String>,
-) -> Result<EmbeddedStorageConfig, StorageArgumentError> {
-    let positions = arguments
-        .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| (argument == "--storage").then_some(index))
-        .collect::<Vec<_>>();
-    if positions.len() > 1 {
-        return Err(StorageArgumentError(
-            "--storage may be supplied only once".to_owned(),
-        ));
-    }
-    let mode = match positions.first().copied() {
-        Some(index) => {
-            if index + 1 >= arguments.len() {
-                return Err(StorageArgumentError(
-                    "--storage requires in-memory, managed-dsql, or adopt-existing-endpoint"
-                        .to_owned(),
-                ));
-            }
-            let mode = arguments.remove(index + 1);
-            arguments.remove(index);
-            mode
-        }
-        None => "in-memory".to_owned(),
-    };
-
-    match mode.as_str() {
-        "in-memory" => Ok(EmbeddedStorageConfig::InMemory),
-        "managed-dsql" => Ok(EmbeddedStorageConfig::ManagedDsql(
-            ManagedEmbeddedDsqlConfig {
-                intent: ManagedClusterIntent::CreateOrRecover,
-                descriptor_path: PathBuf::from(required_environment("ODORI_DSQL_DESCRIPTOR_PATH")?),
-                region: required_environment("ODORI_DSQL_REGION")?,
-                migration_policy: None,
-                limits: EmbeddedDsqlLimits::default(),
-                tags: BTreeMap::from([("tokeira:owner".to_owned(), "odori-example".to_owned())]),
-            },
-        )),
-        "adopt-existing-endpoint" => {
-            let migration_policy = match required_environment("ODORI_DSQL_MIGRATION_POLICY")?
-                .as_str()
-            {
-                "automatic" => DsqlMigrationPolicy::Automatic,
-                "validate-only" => DsqlMigrationPolicy::ValidateOnly,
-                _ => {
-                    return Err(StorageArgumentError(
-                        "ODORI_DSQL_MIGRATION_POLICY must be automatic or validate-only".to_owned(),
-                    ));
-                }
-            };
-            Ok(EmbeddedStorageConfig::ExistingDsql(
-                ExistingEmbeddedDsqlConfig {
-                    region: required_environment("ODORI_DSQL_REGION")?,
-                    cluster_id: required_environment("ODORI_DSQL_CLUSTER_ID")?,
-                    cluster_arn: required_environment("ODORI_DSQL_CLUSTER_ARN")?,
-                    endpoint: required_environment("ODORI_DSQL_ENDPOINT")?,
-                    migration_policy,
-                    limits: EmbeddedDsqlLimits::default(),
-                },
-            ))
-        }
-        _ => Err(StorageArgumentError(format!(
-            "unknown storage mode {mode:?}; use in-memory, managed-dsql, or adopt-existing-endpoint"
-        ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn storage_defaults_to_in_memory_without_consuming_arguments() {
-        let mut arguments = vec!["prepare".to_owned()];
-        assert_eq!(
-            take_storage_flag(&mut arguments).unwrap(),
-            EmbeddedStorageConfig::InMemory
-        );
-        assert_eq!(arguments, ["prepare"]);
-    }
-
-    #[test]
-    fn unknown_storage_mode_is_rejected_without_fallback() {
-        let mut arguments = vec!["--storage".to_owned(), "mystery".to_owned()];
-        let error = take_storage_flag(&mut arguments).unwrap_err();
-        assert!(error.to_string().contains("unknown storage mode"));
-    }
+/// Attach an Odori runtime to a running engine over its in-process
+/// `service_override` transport — no TCP listener, no port.
+pub async fn start_runtime(
+    engine: &Engine,
+    task_queue: &str,
+    registry: AgentRegistry,
+    provider: Arc<dyn Provider>,
+) -> Result<OdoriRuntime> {
+    OdoriRuntime::builder(task_queue)
+        .connect(ConnectTarget::service_override(engine.service_override()))
+        .agents(registry)
+        .providers(Providers::new(provider))
+        .start()
+        .await
 }

@@ -1,8 +1,18 @@
-#[path = "scenario/mod.rs"]
-mod scenario;
+// The run's narration is the example.
+#![allow(clippy::print_stdout)]
 
 use anyhow::{Context as _, Result, bail};
-use odori_embedded_harness::take_storage_flag;
+use clap::Parser;
+use odori_dev_support::StorageArgs;
+use odori_examples::logfire as scenario;
+
+/// Export one run's agent-semantic spans to Logfire.
+#[derive(Debug, Parser)]
+#[command(name = "logfire")]
+struct Cli {
+    #[command(flatten)]
+    storage: StorageArgs,
+}
 
 /// Spans below `warn` are exported only for Odori's agent-semantic layer.
 ///
@@ -14,12 +24,23 @@ use odori_embedded_harness::take_storage_flag;
 /// an exporter only when you understand what leaves the process.
 const REDACTED_EXPORT_FILTER: &str = "warn,odori_agents=info";
 
-fn main() -> Result<()> {
-    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let storage = take_storage_flag(&mut arguments)?;
-    if !arguments.is_empty() {
-        bail!("usage: logfire [--storage <mode>]");
+/// Seed the redacting default filter unless the operator set one.
+///
+/// The logfire SDK takes its per-target filter only from `RUST_LOG`, which is
+/// why this writes the process environment at all. The single `unsafe` lives
+/// here so the carve-out is one site, not the whole example.
+#[allow(unsafe_code)]
+fn seed_export_filter() {
+    if std::env::var_os("RUST_LOG").is_none() {
+        // SAFETY: called from `main` before the tokio runtime is built, so
+        // the process is still single-threaded and no concurrent environment
+        // access is possible.
+        unsafe { std::env::set_var("RUST_LOG", REDACTED_EXPORT_FILTER) };
     }
+}
+
+fn main() -> Result<()> {
+    let storage = Cli::parse().storage.resolve()?;
 
     // This example exists to land a trace in Logfire; running without the
     // token would "succeed" while demonstrating nothing. No fallback.
@@ -29,14 +50,7 @@ fn main() -> Result<()> {
              Logfire project settings); the region is parsed from the token"
         );
     }
-    if std::env::var_os("RUST_LOG").is_none() {
-        // The logfire SDK reads its filter from RUST_LOG and defaults to
-        // TRACE. Seed the redacting default before any thread exists —
-        // main() has not built the tokio runtime yet.
-        // SAFETY: single-threaded at this point; no concurrent environment
-        // access is possible.
-        unsafe { std::env::set_var("RUST_LOG", REDACTED_EXPORT_FILTER) };
-    }
+    seed_export_filter();
 
     let logfire = logfire::configure()
         .with_service_name("odori-logfire-example")

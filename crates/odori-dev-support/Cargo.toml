@@ -1,0 +1,23 @@
+# Dev-only, and no part of it needs `preview` — hence the plain engine dep.
+[package]
+name = "odori-dev-support"
+description = "Shared support for Odori's examples and integration tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+clap = { workspace = true }
+odori-agents = { workspace = true }
+odori-engine = { workspace = true }
+
+[lints]
+workspace = true

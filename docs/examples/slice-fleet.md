@@ -29,7 +29,7 @@ accounting are real.
 ## Run it
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example slice-fleet
+cargo run -p odori-examples --example slice-fleet
 ```
 
 The optional `-- --storage <mode>` flag selects one of the three modes listed

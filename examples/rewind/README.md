@@ -11,7 +11,7 @@ execution count remains one.
 Run the complete deterministic demonstration with:
 
 ```console
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind
+cargo run -p odori-examples --example rewind
 ```
 
 Select storage with `--storage in-memory` (the default), `--storage
@@ -20,7 +20,7 @@ managed-dsql`, or `--storage adopt-existing-endpoint`. For example:
 ```console
 ODORI_DSQL_REGION=us-east-1 \
 ODORI_DSQL_DESCRIPTOR_PATH=/operator-owned/path/rewind-cluster.json \
-cargo run --manifest-path tests/embedded/Cargo.toml --example rewind -- \
+cargo run -p odori-examples --example rewind -- \
   --storage managed-dsql
 ```
 
@@ -91,7 +91,7 @@ Both `rewind_resumes_exactly_and_diverges_timelines` and the focused
 unguarded. Run the focused test with:
 
 ```console
-cargo test --manifest-path tests/embedded/Cargo.toml --test examples rewind_survives_worker_replacement_with_default_cache --locked -- --exact
+cargo test -p odori-embedded-harness --test examples rewind_survives_worker_replacement_with_default_cache --locked -- --exact
 ```
 
 ## Code structure

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PLAN_HASH: &str = "plan-v1-bugfix-feature-budget-contract";
+pub(super) const PLAN_HASH: &str = "plan-v1-bugfix-feature-budget-contract";
 
 /// A bounded unit of fleet work. The file scope is data, not prose: the
 /// write activity enforces it before touching the fixture.

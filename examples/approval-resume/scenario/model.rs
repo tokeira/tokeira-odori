@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::workspace::{ALLOWED_PATH, BROKEN_LIB, FIXED_LIB};
 
-pub const PLAN_HASH: &str = "plan-v1-fix-increment";
+pub(super) const PLAN_HASH: &str = "plan-v1-fix-increment";
 
 pub(super) const SESSION_ID: &str = "approval-resume-session";
 pub(super) const FORKED_SESSION_ID: &str = "approval-resume-approved-session";

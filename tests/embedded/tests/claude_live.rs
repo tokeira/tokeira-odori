@@ -6,11 +6,10 @@
 //! authenticated `claude` CLI on PATH. Run explicitly:
 //!
 //! ```console
-//! cargo test --manifest-path tests/embedded/Cargo.toml --test claude_live -- --ignored
+//! cargo test -p odori-embedded-harness --test claude_live -- --ignored
 //! ```
 
 use std::{
-    net::TcpListener,
     sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -20,21 +19,11 @@ use std::{
 
 use anyhow::Result;
 use odori_agents::{Agent, AgentRegistry, Providers, RunConfig, Tool};
+use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
 use odori_mcp_bridge::BridgeConfig;
 use odori_providers::ClaudeProvider;
 use serde_json::json;
-use tokeira_engine::{Engine, TokeiraConfig};
-
-async fn start_engine() -> Result<(Engine, TcpListener, TcpListener)> {
-    let grpc_guard = TcpListener::bind("127.0.0.1:0")?;
-    let nexus_guard = TcpListener::bind("127.0.0.1:0")?;
-    let mut config = TokeiraConfig::default();
-    config.infrastructure.network.grpc_addr = grpc_guard.local_addr()?.to_string();
-    config.policy.nexus_completion.http_addr = nexus_guard.local_addr()?.to_string();
-    let engine = Engine::start_with_config(config).await?;
-    Ok((engine, grpc_guard, nexus_guard))
-}
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "burns subscription quota; needs an authenticated claude CLI"]

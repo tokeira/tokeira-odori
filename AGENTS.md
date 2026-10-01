@@ -48,7 +48,14 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked
 cargo test --workspace --doc --locked                     # nextest does not run doctests
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+cargo clippy --all-targets --locked -- -D warnings        # default-members: the shipped crates
+cargo nextest run --locked                                # with `preview` off, as `cargo add odori` gets them
 ```
+
+The examples and the integration harness are workspace members that turn
+`preview` on, and feature unification spreads that to every `--workspace`
+build. The two bare lines are the only place the shipped shape is linted and
+tested, so they are part of the bar, not an optional extra.
 
 `cargo deny check bans licenses sources` guards dependency movement — run it
 whenever a task touches dependencies.

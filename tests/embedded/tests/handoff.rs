@@ -2,42 +2,21 @@
 //! tool through the real HTTP bridge, the parent starts the target's
 //! `AgentRun` as a child workflow, and child spend is accounted to both runs.
 
-use std::{
-    net::TcpListener,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use odori_agents::{
     Agent, AgentRegistry, Handoff, Providers, RunBudget, RunEnd,
     provider::{
-        McpTransport, Provider, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-        TurnTooling, TurnUsage,
+        Provider, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest, TurnUsage,
     },
 };
+use odori_dev_support::endpoint;
+use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
 use odori_mcp_bridge::BridgeConfig;
 use serde_json::{Value, json};
-use tokeira_engine::{Engine, TokeiraConfig};
-
-async fn start_engine() -> Result<(Engine, TcpListener, TcpListener)> {
-    let grpc_guard = TcpListener::bind("127.0.0.1:0")?;
-    let nexus_guard = TcpListener::bind("127.0.0.1:0")?;
-    let mut config = TokeiraConfig::default();
-    config.infrastructure.network.grpc_addr = grpc_guard.local_addr()?.to_string();
-    config.policy.nexus_completion.http_addr = nexus_guard.local_addr()?.to_string();
-    let engine = Engine::start_with_config(config).await?;
-    Ok((engine, grpc_guard, nexus_guard))
-}
-
-fn endpoint(tooling: &TurnTooling) -> (String, String) {
-    let server = tooling.mcp_servers.first().expect("bridge attached");
-    let McpTransport::Http { url, headers } = &server.transport else {
-        panic!("bridge transport must be HTTP");
-    };
-    (url.clone(), headers[0].1.clone())
-}
 
 async fn call_handoff(url: &str, auth: &str) -> String {
     let response = reqwest::Client::new()
@@ -93,7 +72,7 @@ impl Provider for HandoffHarness {
             session_id: session_id.clone(),
         });
         if request.directives.name == "parent" {
-            let (url, auth) = endpoint(&request.tooling);
+            let (url, auth) = endpoint(&request.tooling).expect("bridge attached");
             let text = call_handoff(&url, &auth).await;
             let mut usage = TurnUsage::default();
             usage.input_tokens = Some(10);
@@ -167,7 +146,11 @@ async fn handoff_is_child_workflow_and_counts_against_parent_budget() -> Result<
     assert_eq!(output.usage.output_tokens, 8);
     assert!((output.usage.total_cost_usd - 0.30).abs() < f64::EPSILON);
     assert_eq!(
-        provider.child_inputs.lock().expect("child inputs lock").as_slice(),
+        provider
+            .child_inputs
+            .lock()
+            .expect("child inputs lock")
+            .as_slice(),
         ["analyze the delegated evidence"]
     );
 
