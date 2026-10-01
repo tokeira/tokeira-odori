@@ -1,11 +1,11 @@
 # Integration harness: the Odori primitives against the real embedded
-# tokeira engine over service_override. Workspace-excluded (own lockfile)
-# because it depends on the engine repo, whose graph must not expand or
-# constrain the product workspace; the engine arrives as a git dependency so
-# the harness builds identically from any checkout or worktree.
+# tokeira engine over service_override. A workspace member outside
+# `default-members`, so `--workspace` builds and tests it while a bare build
+# compiles only what ships. The engine resolves from the registry like every
+# other dependency, on the workspace's one lockfile.
 [package]
 name = "odori-embedded-harness"
-description = "Workspace-excluded integration harness for Odori's embedded engine examples"
+description = "Integration harness for Odori's embedded engine and examples"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
