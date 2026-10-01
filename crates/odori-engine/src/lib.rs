@@ -241,7 +241,7 @@ impl OdoriRuntimeBuilder {
                     .build()
                     .context("build the worker thread's runtime")?;
                 local.block_on(async move {
-                    let runtime = Runtime::new_assume_tokio(Default::default())
+                    let runtime = Runtime::from_current_tokio(Default::default())
                         .context("assemble the SDK runtime")?;
                     let worker_options = register_odori(
                         WorkerOptions::new(worker_queue),

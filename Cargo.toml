@@ -31,22 +31,22 @@ homepage = "https://tokeira.io"
 # The Temporal Rust SDK is the worker SDK; the embedded tokeira engine speaks
 # the same Temporal contract in-process via
 # `ConnectionOptions::service_override` (an in-memory duplex — no TCP
-# listener, no port). `v0.7.0-fix.1` carries the worker-shutdown permit fix;
-# the patch below keeps Odori and the embedded Tokeira engine on one coherent
-# SDK source so callback-service types cannot split across crate identities.
-temporalio-sdk = "0.7"
-temporalio-sdk-core = "0.7"
-temporalio-client = "0.7"
-temporalio-common = "0.7"
-temporalio-macros = "0.7"
+# listener, no port). Odori and the embedded engine resolve the SDK from the
+# registry on one version line, so callback-service types share one crate
+# identity.
+temporalio-sdk = "1.0"
+temporalio-sdk-core = "0.9"
+temporalio-client = "1.0"
+temporalio-common = "1.0"
+temporalio-macros = "1.0"
 # The macros' expansions reference this crate by name, so any crate using
 # `#[workflow_methods]` needs it as a direct dependency.
-temporalio-workflow = "0.7"
+temporalio-workflow = "1.0"
 # Odori's embedded-engine wrapper forwards the engine's public configuration,
 # startup report, and typed failures. Plain registry dependencies: the engine
 # publishes to crates.io on its own release train.
-tokeira-config = "0.1.1"
-tokeira-engine = "0.1.1"
+tokeira-config = "0.5.0"
+tokeira-engine = "0.5.0"
 
 anyhow = "1.0"
 async-trait = "0.1"
@@ -87,15 +87,6 @@ odori-providers = { path = "crates/odori-providers", version = "0.1.1" }
 odori-engine = { path = "crates/odori-engine", version = "0.1.1" }
 odori-mcp-bridge = { path = "crates/odori-mcp-bridge", version = "0.1.1" }
 
-[patch.crates-io]
-temporalio-client = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-common = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-common-wasm = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-macros = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-protos = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-sdk = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-sdk-core = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
-temporalio-workflow = { git = "https://github.com/tokeira/sdk-rust.git", rev = "0602a7d647f2842747b52b17f3533f7c1086795f" }
 
 # Mechanized AGENTS.md rules: prose rules drift under a fluid codebase;
 # compiler-enforced ones survive refactors. Everything here is binding and
