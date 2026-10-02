@@ -6,10 +6,11 @@
 //!
 //! Modes via `FAKE_CLAUDE_MODE`: `echo` (default), `api_error`, `auth`,
 //! `usage_cap`, `resume_missing`, `die`, `mcp`, `invalid_schema`,
-//! `schema_retries`. The `mcp` mode reads the `--mcp-config` argument and
-//! performs a real `tools/call` against the bridge over loopback HTTP, like
-//! the harness it stands in for. Under `--json-schema`, echo mode answers
-//! through the synthetic `StructuredOutput` tool as the real CLI does.
+//! `schema_retries`, `unknown_model`. The `mcp` mode reads the
+//! `--mcp-config` argument and performs a real `tools/call` against the
+//! bridge over loopback HTTP, like the harness it stands in for. Under
+//! `--json-schema`, echo mode answers through the synthetic
+//! `StructuredOutput` tool as the real CLI does.
 
 // A CLI test double writes its protocol to stdout (and its scripted
 // failure reasons to stderr) by definition; the workspace's
@@ -70,7 +71,27 @@ fn main() {
             emit(
                 &json!({"type": "result", "subtype": "success", "is_error": true,
                 "session_id": session, "result": "API error after retries",
-                "terminal_reason": "api_error"}),
+                "terminal_reason": "api_error", "api_error_status": 529}),
+            );
+            std::process::exit(1);
+        }
+        "unknown_model" => {
+            // A rejected request names its status only in
+            // `api_error_status`: the text is prose (captured against the
+            // 2.1.220 pin, 2026-10-02).
+            let model = arg_value(&args, "--model").unwrap_or_else(|| "claude-unknown".to_owned());
+            let text = format!(
+                "There's an issue with the selected model ({model}). It may not exist or you \
+                 may not have access to it. Run --model to pick a different model."
+            );
+            emit(
+                &json!({"type": "assistant", "message": {"model": "<synthetic>",
+                "content": [{"type": "text", "text": text}]}}),
+            );
+            emit(
+                &json!({"type": "result", "subtype": "success", "is_error": true,
+                "session_id": session, "result": text, "terminal_reason": "api_error",
+                "api_error_status": 404}),
             );
             std::process::exit(1);
         }

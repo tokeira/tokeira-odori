@@ -38,10 +38,13 @@ authentication comes from Claude Code's own store. Explicit
 
 The provider warns, but does not refuse to run, when `claude --version`
 differs from 2.1.220. Unknown stream events remain liveness. Authentication
-failure and subscription usage-cap exhaustion are terminal with a login or
-reset-window instruction. API and rate-limit failures are retryable. A missing
-session is non-retryable. A process death, timeout, or harness death while MCP
-calls are pending is retryable.
+failure (including an API 401 or 403) and subscription usage-cap exhaustion
+are terminal with a login or reset-window instruction. A request the API
+rejects outright — status 400, 404 (an unknown model, for one), or 422 — is a
+non-retryable configuration error, the same mapping as the Anthropic API tier.
+Rate limits, overload, and other API failures are retryable. A missing session
+is non-retryable. A process death, timeout, or harness death while MCP calls
+are pending is retryable.
 
 An agent's output schema (`Agent::with_output_schema`) is passed as
 `--json-schema`. The harness enforces it through a synthetic `StructuredOutput`

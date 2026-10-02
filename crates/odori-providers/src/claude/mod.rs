@@ -403,8 +403,9 @@ impl Provider for ClaudeProvider {
 }
 
 /// The 4-tuple classification — (exit code, result-event-arrived, terminal
-/// reason, stderr) — extended with died-awaiting-MCP. Everything non-zero
-/// exits 1, so the tuple, not the code, separates the classes.
+/// reason, stderr) — extended with died-awaiting-MCP and the API status a
+/// failed result reports. Everything non-zero exits 1, so the tuple, not
+/// the code, separates the classes.
 fn classify(
     terminal: Option<ResultEvent>,
     exit_code: Option<i32>,
@@ -470,8 +471,13 @@ fn classify(
         });
     }
     // Auth failures are terminal with re-auth guidance: retrying cannot
-    // mint credentials.
-    if haystack.contains("authenticate") || haystack.contains("oauth") || haystack.contains("401") {
+    // mint credentials. A 401 or 403 status is this class whatever the
+    // text says, as in the Anthropic API tier's mapping.
+    if matches!(result.api_error_status, Some(401 | 403))
+        || haystack.contains("authenticate")
+        || haystack.contains("oauth")
+        || haystack.contains("401")
+    {
         return Err(TurnError::Config {
             message: format!(
                 "the Claude harness is not authenticated: {text}. Run `claude login` (or \
@@ -489,6 +495,15 @@ fn classify(
                 "the subscription's usage cap is exhausted: {text}. Wait for the window \
                  to reset (or raise the plan) and re-run"
             ),
+        });
+    }
+    // A request the API rejected outright fails identically on every
+    // retry: the statuses the Anthropic API tier treats as rejections
+    // (`classify_status`). Some say so only in prose — an unknown model's
+    // 404 reads "There's an issue with the selected model".
+    if let Some(status @ (400 | 404 | 422)) = result.api_error_status {
+        return Err(TurnError::Config {
+            message: format!("the Anthropic API rejected the harness's request ({status}): {text}"),
         });
     }
     // The model never submitted a schema-valid value within the harness's
@@ -584,9 +599,9 @@ mod tests {
     // Feature: mcp-bridge, Property 6: failure classes are preserved
     // (provider leg; the tool- and bridge-failure legs are proven in the
     // O6 suites). For any synthetic exit shape — result-event presence,
-    // error flags, reason text, exit code, stderr, pending bridge calls —
-    // classification lands in exactly the taxonomy's class for that shape,
-    // never a neighbour's.
+    // error flags, reason text, API status, exit code, stderr, pending
+    // bridge calls — classification lands in exactly the taxonomy's class
+    // for that shape, never a neighbour's.
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -600,6 +615,10 @@ mod tests {
                 Just("usage limit"), Just("transient blip"),
                 Just("structured_output_retry_exhausted"),
             ],
+            status in proptest::option::of(prop_oneof![
+                Just(400u16), Just(401), Just(403), Just(404), Just(408),
+                Just(413), Just(422), Just(429), Just(500), Just(529),
+            ]),
             exit_code in proptest::option::of(0i32..255),
             pending in proptest::collection::vec("[a-z]{4}", 0..3),
         ) {
@@ -611,10 +630,13 @@ mod tests {
                 structured_output: None,
                 errors: None,
                 terminal_reason: Some(reason.to_owned()),
+                api_error_status: status,
                 total_cost_usd: None,
                 duration_ms: None,
                 usage: None,
             });
+            // The statuses the API rejects for good, credentials included.
+            let rejected = matches!(status, Some(400 | 401 | 403 | 404 | 422));
             let pending: std::collections::HashSet<String> =
                 pending.into_iter().collect();
             let outcome = classify(
@@ -640,7 +662,9 @@ mod tests {
                 Err(TurnError::Config { .. }) => {
                     prop_assert!(has_result && is_error);
                     prop_assert!(
-                        reason.contains("authenticate") || reason.contains("usage limit")
+                        reason.contains("authenticate")
+                            || reason.contains("usage limit")
+                            || rejected
                     );
                 }
                 Err(TurnError::Api { .. }) => {
@@ -649,6 +673,7 @@ mod tests {
                         !reason.contains("no conversation found")
                             && !reason.contains("authenticate")
                             && !reason.contains("usage limit")
+                            && !rejected
                     );
                 }
                 Err(other) => prop_assert!(false, "unexpected class: {other:?}"),
@@ -819,6 +844,7 @@ mod tests {
             structured_output,
             errors: None,
             terminal_reason: Some("completed".into()),
+            api_error_status: None,
             total_cost_usd: None,
             duration_ms: None,
             usage: None,
