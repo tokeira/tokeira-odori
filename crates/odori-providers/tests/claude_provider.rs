@@ -1,10 +1,10 @@
 //! Unguarded (CI-safe) tests of the Claude provider against the scripted
 //! test double (`odori-fake-claude`), covering supervision, argument
-//! rendering, the exit-classification taxonomy — including
-//! died-awaiting-MCP — and a real bridged `tools/call` through the
-//! bridge's loopback server, all without a subscription. Fake modes are
-//! selected per provider instance via `ClaudeConfig::with_env`, so tests
-//! stay process-state-free.
+//! rendering, structured output, the exit-classification taxonomy —
+//! including died-awaiting-MCP — and a real bridged `tools/call` through
+//! the bridge's loopback server, all without a subscription. Fake modes
+//! are selected per provider instance via `ClaudeConfig::with_env`, so
+//! tests stay process-state-free.
 
 use std::{sync::Arc, time::Duration};
 
@@ -13,7 +13,7 @@ use odori_agents::provider::{
     TurnRequest,
 };
 use odori_providers::{ClaudeConfig, ClaudeProvider, PINNED_VERSION};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 fn provider_with(env: &[(&str, &str)]) -> ClaudeProvider {
@@ -163,16 +163,56 @@ async fn session_directives_render_resume_and_fork() {
 #[tokio::test]
 async fn model_and_schema_directives_reach_the_harness() {
     let provider = provider_with(&[]);
-    let (events, _receiver) = sink();
+    let (events, receiver) = sink();
+    let schema = json!({"type": "object", "properties": {"echo": {"type": "string"}}});
     let mut req = request("typed", SessionDirective::Start);
     req.directives.model = Some("opus".to_owned());
-    req.directives.output_schema = Some(json!({"type": "object"}));
+    req.directives.output_schema = Some(schema.clone());
     let outcome = provider
         .execute_turn(req, events)
         .await
         .expect("turn succeeds");
-    assert!(outcome.text.contains("model=opus"));
-    assert!(outcome.text.contains("schema"));
+
+    // The turn text is the harness's validated `structured_output`, not
+    // the prose `result` the scripted turn ends on.
+    let value: Value =
+        serde_json::from_str(&outcome.text).expect("the structured output is the turn text");
+    let echo = value["echo"].as_str().expect("echoed invocation");
+    assert!(
+        echo.contains("model=opus") && echo.contains("schema"),
+        "{echo}"
+    );
+    assert_eq!(
+        value["schema"], schema,
+        "the schema reaches the harness verbatim"
+    );
+    let events = drain(receiver);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            TurnEvent::ToolUse { name } if name == "StructuredOutput"
+        )),
+        "the synthetic tool surfaces like any tool use: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn exhausted_schema_retries_are_retryable_and_keep_the_reason() {
+    let provider = provider_with(&[("FAKE_CLAUDE_MODE", "schema_retries")]);
+    let (events, _receiver) = sink();
+    let error = provider
+        .execute_turn(request("typed", SessionDirective::Start), events)
+        .await
+        .expect_err("exhausted retries fail the turn");
+    let TurnError::Api { message } = &error else {
+        panic!("exhausted structured-output retries must be Api: {error:?}");
+    };
+    assert!(
+        message.contains("structured-output retries")
+            && message.contains("Failed to provide valid structured output after 5 attempts"),
+        "the harness's reason must survive: {message}"
+    );
+    assert!(error.is_retryable());
 }
 
 #[tokio::test]
@@ -192,6 +232,16 @@ async fn classification_maps_the_taxonomy() {
             false,
         ),
         ("die", |e| matches!(e, TurnError::HarnessDied { .. }), true),
+        (
+            "invalid_schema",
+            |e| matches!(e, TurnError::Config { .. }),
+            false,
+        ),
+        (
+            "schema_retries",
+            |e| matches!(e, TurnError::Api { .. }),
+            true,
+        ),
     ];
     for (mode, matcher, retryable) in cases {
         let provider = provider_with(&[("FAKE_CLAUDE_MODE", mode)]);

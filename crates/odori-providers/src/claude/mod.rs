@@ -35,6 +35,7 @@ use odori_agents::provider::{
     Effort, Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent, TurnEventSink,
     TurnOutcome, TurnRequest, TurnUsage,
 };
+use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
     process::Command,
@@ -200,7 +201,7 @@ impl ClaudeProvider {
             cmd.arg("--effort").arg(claude_effort(effort)?);
         }
         if let Some(schema) = &request.directives.output_schema {
-            cmd.arg("--json-schema").arg(schema.to_string());
+            cmd.arg("--json-schema").arg(claude_schema(schema)?);
         }
         let tooling = render_tooling(&request.tooling);
         cmd.args(&tooling.args);
@@ -238,6 +239,31 @@ fn claude_effort(effort: Effort) -> Result<&'static str, TurnError> {
         }),
         Effort::Low | Effort::Medium | Effort::High | Effort::XHigh | Effort::Max => {
             Ok(effort.as_str())
+        }
+    }
+}
+
+/// Render an output schema for `--json-schema`. The harness enforces it
+/// through a synthetic `StructuredOutput` tool whose input schema *is* the
+/// caller's schema, and the API accepts only object-rooted tool schemas:
+/// any other root passes the harness's own validation, then fails every
+/// attempt with an API 400 (measured against 2.1.286, 2026-10-01; the pin
+/// builds the tool the same way). Like an unsupported effort level, that
+/// is a configuration error **before** any process spawns.
+fn claude_schema(schema: &Value) -> Result<String, TurnError> {
+    match schema.get("type") {
+        Some(Value::String(root)) if root == "object" => Ok(schema.to_string()),
+        root => {
+            let found =
+                root.map_or_else(|| "no `type`".to_owned(), |ty| format!("`\"type\": {ty}`"));
+            Err(TurnError::Config {
+                message: format!(
+                    "the Claude Code harness (pinned {PINNED_VERSION}) enforces an output \
+                     schema as a tool input, which must be an object: the schema root needs \
+                     `\"type\": \"object\"`, found {found} — wrap a list or scalar output in \
+                     an object property"
+                ),
+            })
         }
     }
 }
@@ -399,9 +425,12 @@ fn classify(
                 pending_calls: pending,
             });
         }
-        // Usage-error shape from the spike: instant exit, empty stdout.
+        // Usage-error shape from the spike: instant exit, empty stdout. A
+        // `--json-schema` the harness rejects fails the same way, before
+        // the stream starts (2.1.220 and 2.1.286 alike).
         if stderr_head.contains("error: unknown option")
             || stderr_head.contains("error: missing required argument")
+            || stderr_head.contains("--json-schema is not a valid JSON Schema")
         {
             return Err(TurnError::Config {
                 message: format!("the harness rejected its invocation: {stderr_head}"),
@@ -415,9 +444,16 @@ fn classify(
 
     // A result event arrived; `is_error` is authoritative (subtype lies).
     if !result.is_error {
+        // A schema-constrained turn's value is `structured_output`; the
+        // harness copies it into `result` only when the last message has
+        // no text, so the field wins whenever it is present.
+        let text = match &result.structured_output {
+            Some(value) => value.to_string(),
+            None => result.result.clone().unwrap_or_default(),
+        };
         let mut outcome = TurnOutcome::new(
             session_id.unwrap_or_else(|| result.session_id.clone()),
-            result.result.clone().unwrap_or_default(),
+            text,
         );
         outcome.usage = result_usage(&result);
         return Ok(outcome);
@@ -455,6 +491,20 @@ fn classify(
             ),
         });
     }
+    // The model never submitted a schema-valid value within the harness's
+    // own retries (`MAX_STRUCTURED_OUTPUT_RETRIES`, default 5). Retryable:
+    // a fresh attempt can succeed where this one drifted. The reason rides
+    // `errors`, not `result`.
+    if result.subtype == "error_max_structured_output_retries"
+        || result.terminal_reason.as_deref() == Some("structured_output_retry_exhausted")
+    {
+        return Err(TurnError::Api {
+            message: format!(
+                "the harness exhausted its structured-output retries: {}",
+                failure_detail(&result, &text)
+            ),
+        });
+    }
     // Everything else that produced an error result is API-side and
     // retryable with backoff — including rate limits, which the CLI also
     // retries internally (api_retry events, max 10).
@@ -464,6 +514,22 @@ fn classify(
             result.terminal_reason.as_deref().unwrap_or("unspecified"),
         ),
     })
+}
+
+/// The harness's own account of a failed result: its `errors` lines when
+/// it sent any, else the result text.
+fn failure_detail(result: &ResultEvent, text: &str) -> String {
+    let lines: Vec<&str> = result
+        .errors
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|errors| errors.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    match (lines.is_empty(), text.is_empty()) {
+        (false, _) => lines.join("; "),
+        (true, false) => text.to_owned(),
+        (true, true) => "the harness reported no detail".to_owned(),
+    }
 }
 
 fn result_usage(result: &ResultEvent) -> TurnUsage {
@@ -532,6 +598,7 @@ mod tests {
                 Just("completed"), Just("api_error"),
                 Just("no conversation found"), Just("authenticate"),
                 Just("usage limit"), Just("transient blip"),
+                Just("structured_output_retry_exhausted"),
             ],
             exit_code in proptest::option::of(0i32..255),
             pending in proptest::collection::vec("[a-z]{4}", 0..3),
@@ -541,6 +608,8 @@ mod tests {
                 is_error,
                 session_id: "sess-p".into(),
                 result: Some(reason.to_owned()),
+                structured_output: None,
+                errors: None,
                 terminal_reason: Some(reason.to_owned()),
                 total_cost_usd: None,
                 duration_ms: None,
@@ -668,6 +737,110 @@ mod tests {
                 .get_args()
                 .any(|arg| arg.to_string_lossy() == "--effort")
         );
+    }
+
+    #[test]
+    fn output_schemas_render_only_with_an_object_root() {
+        let provider = ClaudeProvider::new();
+        let request_with = |schema: serde_json::Value| {
+            let mut directives = AgentDirectives::new("a", "i");
+            directives.output_schema = Some(schema);
+            TurnRequest::new(
+                TurnIdentity {
+                    run_id: "r".into(),
+                    turn: 0,
+                    attempt: 1,
+                },
+                directives,
+                "hello",
+                SessionDirective::Start,
+            )
+        };
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"]
+        });
+        let cmd = provider
+            .build_command(&request_with(schema.clone()))
+            .expect("object root renders");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let flag = args
+            .iter()
+            .position(|arg| arg == "--json-schema")
+            .expect("--json-schema rendered");
+        let rendered: serde_json::Value =
+            serde_json::from_str(&args[flag + 1]).expect("the flag carries the schema as json");
+        assert_eq!(rendered, schema);
+
+        // Tool inputs are objects: any other root is a typed configuration
+        // error before any spawn, naming what the root declared.
+        for (schema, found) in [
+            (
+                serde_json::json!({"type": "array", "items": {"type": "string"}}),
+                "\"array\"",
+            ),
+            (
+                serde_json::json!({"type": ["object", "null"]}),
+                "[\"object\",\"null\"]",
+            ),
+            (
+                serde_json::json!({"properties": {"ok": {"type": "boolean"}}}),
+                "no `type`",
+            ),
+        ] {
+            match provider.build_command(&request_with(schema)) {
+                Err(TurnError::Config { message }) => {
+                    assert!(
+                        message.contains("\"type\": \"object\"")
+                            && message.contains(found)
+                            && message.contains(PINNED_VERSION),
+                        "{message}"
+                    );
+                }
+                other => panic!("expected a typed configuration error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn structured_output_is_the_turn_text() {
+        let terminal = |structured_output| ResultEvent {
+            subtype: "success".into(),
+            is_error: false,
+            session_id: "sess-s".into(),
+            // The trap: a turn that ends on text leaves prose here.
+            result: Some("Here is the structured output.".into()),
+            structured_output,
+            errors: None,
+            terminal_reason: Some("completed".into()),
+            total_cost_usd: None,
+            duration_ms: None,
+            usage: None,
+        };
+        let classified = |structured_output| {
+            classify(
+                Some(terminal(structured_output)),
+                Some(0),
+                None,
+                String::new(),
+                HashSet::new(),
+            )
+            .expect("a successful result")
+        };
+
+        let outcome = classified(Some(serde_json::json!({"ok": true})));
+        assert_eq!(outcome.text, r#"{"ok":true}"#);
+        assert_eq!(outcome.session_id, "sess-s");
+
+        // Without a schema there is no structured output: the text stands.
+        let outcome = classified(None);
+        assert_eq!(outcome.text, "Here is the structured output.");
     }
 
     #[test]

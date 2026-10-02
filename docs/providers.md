@@ -43,6 +43,17 @@ reset-window instruction. API and rate-limit failures are retryable. A missing
 session is non-retryable. A process death, timeout, or harness death while MCP
 calls are pending is retryable.
 
+An agent's output schema (`Agent::with_output_schema`) is passed as
+`--json-schema`. The harness enforces it through a synthetic `StructuredOutput`
+tool and reports the validated value in the result's `structured_output` field.
+That value becomes the turn's final text, so `Json<T>` parses exactly what the
+harness checked. Tool inputs are objects, so the schema root must declare
+`"type": "object"`: any other root fails before spawn, and a schema the harness
+itself rejects fails at startup, both as non-retryable `TurnError::Config`.
+When the model never submits a valid value within the harness's own retries
+(five by default), the turn fails as a retryable `TurnError::Api` that keeps
+the harness's reason.
+
 Provider name: `claude`.
 
 ## Codex subscription

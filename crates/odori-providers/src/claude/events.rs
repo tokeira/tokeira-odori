@@ -151,7 +151,8 @@ pub enum UserBlock {
 /// The terminal `{"type":"result", ...}` line.
 #[derive(Debug, Deserialize)]
 pub struct ResultEvent {
-    /// `success` or `error_during_execution`. **Trap:** can read
+    /// `success`, or an `error_*` subtype (`error_during_execution`,
+    /// `error_max_structured_output_retries`, …). **Trap:** can read
     /// `"success"` with `is_error: true` — key on `is_error`.
     pub subtype: String,
     /// The authoritative success flag.
@@ -162,6 +163,17 @@ pub struct ResultEvent {
     /// Final text on success; an error sentence on failure.
     #[serde(default)]
     pub result: Option<String>,
+    /// Under `--json-schema`: the value the model submitted through the
+    /// harness's synthetic `StructuredOutput` tool, already validated
+    /// against the schema. **Trap:** `result` repeats it only when the
+    /// turn's last message carries no text — this field is the value.
+    #[serde(default)]
+    pub structured_output: Option<Value>,
+    /// The harness's failure detail on `error_*` subtypes (an array of
+    /// strings at the pin; absent on API errors). Kept raw so a shape
+    /// change cannot fail the whole terminal line's parse.
+    #[serde(default)]
+    pub errors: Option<Value>,
     /// `"completed"` on success, `"api_error"` on API failure.
     #[serde(default)]
     pub terminal_reason: Option<String>,
