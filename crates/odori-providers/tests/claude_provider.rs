@@ -242,6 +242,11 @@ async fn classification_maps_the_taxonomy() {
             |e| matches!(e, TurnError::Api { .. }),
             true,
         ),
+        (
+            "unknown_model",
+            |e| matches!(e, TurnError::Config { .. }),
+            false,
+        ),
     ];
     for (mode, matcher, retryable) in cases {
         let provider = provider_with(&[("FAKE_CLAUDE_MODE", mode)]);
@@ -293,6 +298,28 @@ async fn auth_failure_text_carries_reauth_guidance() {
         panic!("auth must be terminal Config: {error:?}");
     };
     assert!(message.contains("claude login"), "{message}");
+}
+
+#[tokio::test]
+async fn rejected_requests_are_terminal_and_say_what_was_rejected() {
+    // An unknown model's 404 carries no status in its text: only the
+    // result's `api_error_status` separates it from a transient failure.
+    let provider = provider_with(&[("FAKE_CLAUDE_MODE", "unknown_model")]);
+    let (events, _receiver) = sink();
+    let mut req = request("hi", SessionDirective::Start);
+    req.directives.model = Some("claude-nonexistent-0".to_owned());
+    let error = provider
+        .execute_turn(req, events)
+        .await
+        .expect_err("a rejected request fails the turn");
+    let TurnError::Config { message } = &error else {
+        panic!("a rejected request must be terminal Config: {error:?}");
+    };
+    assert!(
+        message.contains("(404)") && message.contains("selected model (claude-nonexistent-0)"),
+        "{message}"
+    );
+    assert!(!error.is_retryable());
 }
 
 #[tokio::test]

@@ -177,6 +177,11 @@ pub struct ResultEvent {
     /// `"completed"` on success, `"api_error"` on API failure.
     #[serde(default)]
     pub terminal_reason: Option<String>,
+    /// The HTTP status of the API call that failed the turn; `null` when
+    /// none did (2.1.220 and 2.1.286 alike). The only signal for some
+    /// rejections: an unknown model's 404 says so in prose alone.
+    #[serde(default)]
+    pub api_error_status: Option<u16>,
     /// Dollar cost as the CLI reported it.
     #[serde(default)]
     pub total_cost_usd: Option<f64>,
