@@ -5,9 +5,11 @@
 //! assistant messages on API failure, the reason-on-stderr resume miss).
 //!
 //! Modes via `FAKE_CLAUDE_MODE`: `echo` (default), `api_error`, `auth`,
-//! `usage_cap`, `resume_missing`, `die`, `mcp`. The `mcp` mode reads the
-//! `--mcp-config` argument and performs a real `tools/call` against the
-//! bridge over loopback HTTP, like the harness it stands in for.
+//! `usage_cap`, `resume_missing`, `die`, `mcp`, `invalid_schema`,
+//! `schema_retries`. The `mcp` mode reads the `--mcp-config` argument and
+//! performs a real `tools/call` against the bridge over loopback HTTP, like
+//! the harness it stands in for. Under `--json-schema`, echo mode answers
+//! through the synthetic `StructuredOutput` tool as the real CLI does.
 
 // A CLI test double writes its protocol to stdout (and its scripted
 // failure reasons to stderr) by definition; the workspace's
@@ -44,6 +46,16 @@ fn main() {
     let mode = std::env::var("FAKE_CLAUDE_MODE").unwrap_or_else(|_| "echo".to_owned());
     let session = std::env::var("FAKE_CLAUDE_SESSION").unwrap_or_else(|_| "sess-fake".to_owned());
     let prompt = arg_value(&args, "-p").unwrap_or_default();
+
+    if mode == "invalid_schema" {
+        // Flag validation runs before the stream starts: no init, no
+        // result, exit 1 (stderr as the 2.1.220 pin and 2.1.286 print it).
+        eprintln!(
+            "Error: --json-schema is not a valid JSON Schema: data/type must be equal to one \
+             of the allowed values"
+        );
+        std::process::exit(1);
+    }
 
     emit(&json!({"type": "system", "subtype": "init", "session_id": session}));
 
@@ -86,6 +98,22 @@ fn main() {
                 "is_error": true, "session_id": session, "num_turns": 0}),
             );
             eprintln!("No conversation found with session ID: {session}");
+            std::process::exit(1);
+        }
+        "schema_retries" => {
+            // No StructuredOutput attempt validated: the pin gives up after
+            // MAX_STRUCTURED_OUTPUT_RETRIES (default 5), with no `result`
+            // and its reason in `errors`.
+            emit(&json!({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "tu-structured-1", "name": "StructuredOutput"}]}}));
+            emit(&json!({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "tu-structured-1"}]}}));
+            emit(
+                &json!({"type": "result", "subtype": "error_max_structured_output_retries",
+                "is_error": true, "session_id": session,
+                "terminal_reason": "structured_output_retry_exhausted",
+                "errors": ["Failed to provide valid structured output after 5 attempts"]}),
+            );
             std::process::exit(1);
         }
         "die" => {
@@ -172,25 +200,45 @@ fn main() {
             if let Some(model) = arg_value(&args, "--model") {
                 markers.push(format!("model={model}"));
             }
-            if arg_value(&args, "--json-schema").is_some() {
+            let schema = arg_value(&args, "--json-schema")
+                .map(|raw| serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw)));
+            if schema.is_some() {
                 markers.push("schema".to_owned());
             }
             let text = format!("echo: {prompt} [{}]", markers.join(" "));
             emit(&json!({"type": "assistant", "message": {"content": [
                 {"type": "text", "text": text}]}}));
+            let mut result = json!({"type": "result", "subtype": "success", "is_error": false,
+                "session_id": session, "result": text, "terminal_reason": "completed",
+                "total_cost_usd": 0.02, "duration_ms": 40,
+                "usage": {"input_tokens": 7, "output_tokens": 3,
+                "cache_read_input_tokens": 22_694, "cache_creation_input_tokens": 12_529}});
+            if let Some(schema) = schema {
+                // The answer goes through the synthetic StructuredOutput
+                // tool and its validated input rides `structured_output`.
+                // This turn then ends on text, so `result` is prose (the
+                // real CLI's trap) and only the field carries the value.
+                // Echoing the schema shows it arrived verbatim.
+                let value = json!({"echo": text, "schema": schema});
+                emit(&json!({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "tu-structured-1", "name": "StructuredOutput",
+                     "input": value}]}}));
+                emit(&json!({"type": "user", "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": "tu-structured-1",
+                     "content": "Structured output provided successfully"}]}}));
+                let closing = "Done: the structured output is above.";
+                emit(&json!({"type": "assistant", "message": {"content": [
+                    {"type": "text", "text": closing}]}}));
+                result["result"] = json!(closing);
+                result["structured_output"] = value;
+            }
             // Emitted on ordinary runs by the pinned CLI (payload shape
             // captured against 2.1.220, 2026-08-30).
             emit(&json!({"type": "rate_limit_event", "rate_limit_info": {
                 "status": "allowed", "resetsAt": 1_788_118_800_u64,
                 "rateLimitType": "five_hour", "overageStatus": "allowed",
                 "overageResetsAt": 1_788_220_800_u64, "isUsingOverage": false}}));
-            emit(
-                &json!({"type": "result", "subtype": "success", "is_error": false,
-                "session_id": session, "result": text, "terminal_reason": "completed",
-                "total_cost_usd": 0.02, "duration_ms": 40,
-                "usage": {"input_tokens": 7, "output_tokens": 3,
-                "cache_read_input_tokens": 22_694, "cache_creation_input_tokens": 12_529}}),
-            );
+            emit(&result);
             // Real protocol trap: a trailing frame after the result.
             emit(&json!({"type": "system", "subtype": "task_summary"}));
         }
