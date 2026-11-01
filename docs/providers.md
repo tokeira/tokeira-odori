@@ -34,7 +34,8 @@ can be selected with `ClaudeConfig::with_binary`.
 At turn start, the provider removes inherited `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_API_KEY` so subscription
 authentication comes from Claude Code's own store. Explicit
-`ClaudeConfig::with_env` values are applied afterward.
+`ClaudeConfig::with_env` values are applied afterward. A `ClaudeConfig`'s
+debug output names those entries but never prints their values.
 
 `ClaudeConfig::with_name` registers an instance under another name, so
 differently configured instances can serve side by side, and

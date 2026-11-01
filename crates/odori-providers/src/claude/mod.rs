@@ -25,6 +25,7 @@ pub mod events;
 
 use std::{
     collections::HashSet,
+    fmt,
     path::PathBuf,
     process::Stdio,
     time::{Duration, Instant},
@@ -79,7 +80,7 @@ const PROVIDER_FLAGS: &[&str] = &[
 ];
 
 /// Configuration for [`ClaudeProvider`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct ClaudeConfig {
     /// The provider name agents select this instance by
@@ -94,7 +95,8 @@ pub struct ClaudeConfig {
     /// Fallback turn deadline when the request carries none.
     pub default_deadline: Duration,
     /// Extra environment entries for the spawned harness (applied after
-    /// scrubbing, so a deliberate operator override wins).
+    /// scrubbing, so a deliberate operator override wins). Debug output
+    /// names them but never prints their values.
     pub extra_env: Vec<(String, String)>,
     /// Extra arguments for every turn's `claude` invocation, appended after
     /// the provider's own (e.g. `--max-budget-usd 5`). One that repeats a
@@ -137,6 +139,25 @@ impl ClaudeConfig {
     pub fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.extra_args.extend(args.into_iter().map(Into::into));
         self
+    }
+}
+
+impl fmt::Debug for ClaudeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `with_env` is how a credential such as `ANTHROPIC_API_KEY` reaches
+        // the harness, so the values stay out of logs and panic messages.
+        let env: Vec<(&str, &str)> = self
+            .extra_env
+            .iter()
+            .map(|(name, _)| (name.as_str(), "<redacted>"))
+            .collect();
+        f.debug_struct("ClaudeConfig")
+            .field("name", &self.name)
+            .field("binary", &self.binary)
+            .field("default_deadline", &self.default_deadline)
+            .field("extra_env", &env)
+            .field("extra_args", &self.extra_args)
+            .finish()
     }
 }
 
@@ -838,6 +859,14 @@ mod tests {
         let named =
             ClaudeProvider::with_config(ClaudeConfig::default().with_name("claude-reviewer"));
         assert_eq!(named.name(), "claude-reviewer");
+    }
+
+    #[test]
+    fn debug_output_names_environment_entries_without_their_values() {
+        let config = ClaudeConfig::default().with_env("ANTHROPIC_API_KEY", "not-a-real-key-7f3a");
+        let rendered = format!("{:?}", ClaudeProvider::with_config(config));
+        assert!(rendered.contains("ANTHROPIC_API_KEY"), "{rendered}");
+        assert!(!rendered.contains("not-a-real-key-7f3a"), "{rendered}");
     }
 
     #[test]
