@@ -341,6 +341,38 @@ async fn interactive_conversation_forks_turns_and_ends() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn conversation_takes_an_explicit_run_config() -> Result<()> {
+    let (engine, _g1, _g2) = start_engine().await?;
+    let mut registry = AgentRegistry::new();
+    registry.register(Agent::new("configured", "follow the run's caps"));
+    let provider = ScriptedProvider::scripted(Vec::new());
+    let runtime = start_runtime(&engine, "tq-chat-config", registry, provider.clone()).await?;
+
+    // The default config is not interactive: the conversation must make it
+    // so, or the run completes after turn 0 and the message has no run to
+    // reach. The budget proves the rest of the config arrived.
+    let config = RunConfig::default().with_budget(RunBudget::unlimited().with_max_turns(1));
+    let conversation = runtime
+        .runner()
+        .start_conversation_with_config("configured", "first", "run-chat-config-1", config)
+        .await?;
+    conversation.send("second").await?;
+    let output = conversation.end().await?;
+    assert_eq!(output.turns, 1);
+    assert_eq!(
+        output.end,
+        RunEnd::BudgetExceeded {
+            cap: odori_agents::run::BudgetCap::Turns { spent: 1, cap: 1 }
+        }
+    );
+    assert_eq!(provider.requests().len(), 1);
+
+    runtime.shutdown().await?;
+    engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn budget_and_guardrails_end_runs_typed() -> Result<()> {
     #[derive(Debug)]
     struct NoPirates;

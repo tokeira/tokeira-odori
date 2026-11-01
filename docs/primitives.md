@@ -8,7 +8,8 @@ Rust; execution state lives in workflow history.
 An `Agent` is a named configuration. It owns instructions and may select a
 provider, model, and [reasoning effort](providers.md#reasoning-effort),
 expose tools and handoffs, add input and output guardrails, declare an
-output schema, and set a budget.
+output schema, set a budget, and run its turns in a
+[working directory](providers.md#working-directory) of its own.
 
 The worker resolves agents by name from an `AgentRegistry`. Agent objects are
 not serialized into workflow inputs because they contain live tool handlers and
@@ -31,7 +32,8 @@ This fragment is compiled as part of the example target.
 A `Runner` starts and follows `AgentRun` workflows. `run` executes one
 non-interactive turn and parses the requested output type. `run_with_config`
 adds explicit budgets and turn timeouts. `start_conversation` creates a live
-interactive workflow; `resume_conversation` rebuilds a process-local handle
+interactive workflow, and `start_conversation_with_config` does the same with
+explicit configuration; `resume_conversation` rebuilds a process-local handle
 for an existing run ID.
 
 The run ID is the workflow ID and the idempotency key for the whole run.

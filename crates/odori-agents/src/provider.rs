@@ -23,6 +23,7 @@
 
 use std::{
     fmt,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -150,6 +151,12 @@ pub struct AgentDirectives {
     /// enforce it (headless Claude Code: `--json-schema`). Typed-output
     /// parsing happens runner-side either way.
     pub output_schema: Option<Value>,
+    /// Directory the turn runs in: the harness process starts there, and a
+    /// backend with a workspace of its own (Codex's thread `cwd`) uses it
+    /// too. `None` means the worker's own working directory; a relative
+    /// path resolves against it when the turn starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<PathBuf>,
 }
 
 impl AgentDirectives {
@@ -161,6 +168,7 @@ impl AgentDirectives {
             model: None,
             effort: None,
             output_schema: None,
+            working_directory: None,
         }
     }
 }
@@ -802,5 +810,27 @@ mod tests {
         assert_eq!(directives.effort, None);
         let json = serde_json::to_string(&directives).expect("serialize");
         assert!(!json.contains("effort"), "{json}");
+    }
+
+    #[test]
+    fn working_directory_is_additive_on_the_wire() {
+        // The shape from before the field: absent means the worker's own
+        // directory, and None serializes to nothing.
+        let directives: AgentDirectives = serde_json::from_value(serde_json::json!({
+            "name": "a",
+            "instructions": "i",
+            "model": null,
+            "output_schema": null
+        }))
+        .expect("old directive shape");
+        assert_eq!(directives.working_directory, None);
+        let json = serde_json::to_string(&directives).expect("serialize");
+        assert!(!json.contains("working_directory"), "{json}");
+
+        let mut placed = AgentDirectives::new("a", "i");
+        placed.working_directory = Some(PathBuf::from("/srv/task"));
+        let json = serde_json::to_string(&placed).expect("serialize");
+        let back: AgentDirectives = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.working_directory, Some(PathBuf::from("/srv/task")));
     }
 }

@@ -25,6 +25,7 @@ pub mod events;
 
 use std::{
     collections::HashSet,
+    fmt,
     path::PathBuf,
     process::Stdio,
     time::{Duration, Instant},
@@ -57,31 +58,71 @@ const SCRUBBED_ENV: &[&str] = &[
     "ANTHROPIC_API_KEY",
 ];
 
+/// Flags the provider renders itself. An extra argument repeating one would
+/// fight that rendering — a second `--output-format` breaks stream
+/// supervision, a second `--resume` the session contract — so it fails
+/// before spawn like any other configuration error.
+const PROVIDER_FLAGS: &[&str] = &[
+    "-p",
+    "--print",
+    "--output-format",
+    "--verbose",
+    "-r",
+    "--resume",
+    "--fork-session",
+    "--append-system-prompt",
+    "--model",
+    "--effort",
+    "--json-schema",
+    "--mcp-config",
+    "--allowedTools",
+    "--allowed-tools",
+];
+
 /// Configuration for [`ClaudeProvider`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct ClaudeConfig {
+    /// The provider name agents select this instance by
+    /// ([`Agent::with_provider`](odori_agents::Agent::with_provider)),
+    /// `"claude"` by default. Distinct names let differently configured
+    /// instances serve side by side; telemetry reports the name as the
+    /// turn's provider.
+    pub name: String,
     /// The harness binary; `"claude"` resolves via `PATH`. Point it at a
     /// test double for scripted runs.
     pub binary: PathBuf,
     /// Fallback turn deadline when the request carries none.
     pub default_deadline: Duration,
     /// Extra environment entries for the spawned harness (applied after
-    /// scrubbing, so a deliberate operator override wins).
+    /// scrubbing, so a deliberate operator override wins). Debug output
+    /// names them but never prints their values.
     pub extra_env: Vec<(String, String)>,
+    /// Extra arguments for every turn's `claude` invocation, appended after
+    /// the provider's own (e.g. `--max-budget-usd 5`). One that repeats a
+    /// flag the provider renders itself fails the turn before spawn.
+    pub extra_args: Vec<String>,
 }
 
 impl Default for ClaudeConfig {
     fn default() -> Self {
         Self {
+            name: "claude".to_owned(),
             binary: PathBuf::from("claude"),
             default_deadline: Duration::from_secs(600),
             extra_env: Vec::new(),
+            extra_args: Vec::new(),
         }
     }
 }
 
 impl ClaudeConfig {
+    /// Register this instance under `name` instead of `"claude"`.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
     /// Use a specific harness binary.
     pub fn with_binary(mut self, binary: impl Into<PathBuf>) -> Self {
         self.binary = binary.into();
@@ -92,6 +133,31 @@ impl ClaudeConfig {
     pub fn with_env(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.extra_env.push((name.into(), value.into()));
         self
+    }
+
+    /// Append arguments to every turn's `claude` invocation.
+    pub fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.extra_args.extend(args.into_iter().map(Into::into));
+        self
+    }
+}
+
+impl fmt::Debug for ClaudeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `with_env` is how a credential such as `ANTHROPIC_API_KEY` reaches
+        // the harness, so the values stay out of logs and panic messages.
+        let env: Vec<(&str, &str)> = self
+            .extra_env
+            .iter()
+            .map(|(name, _)| (name.as_str(), "<redacted>"))
+            .collect();
+        f.debug_struct("ClaudeConfig")
+            .field("name", &self.name)
+            .field("binary", &self.binary)
+            .field("default_deadline", &self.default_deadline)
+            .field("extra_env", &env)
+            .field("extra_args", &self.extra_args)
+            .finish()
     }
 }
 
@@ -178,6 +244,19 @@ impl ClaudeProvider {
 
     fn build_command(&self, request: &TurnRequest) -> Result<Command, TurnError> {
         let mut cmd = Command::new(&self.config.binary);
+        if let Some(directory) = &request.directives.working_directory {
+            // Checked here because a missing directory fails the spawn
+            // itself, which would read as a missing harness binary.
+            if !directory.is_dir() {
+                return Err(TurnError::Config {
+                    message: format!(
+                        "the agent's working directory {} is not a directory",
+                        directory.display()
+                    ),
+                });
+            }
+            cmd.current_dir(directory);
+        }
         match &request.session {
             SessionDirective::Start => {}
             SessionDirective::Resume { session_id } => {
@@ -205,6 +284,7 @@ impl ClaudeProvider {
         }
         let tooling = render_tooling(&request.tooling);
         cmd.args(&tooling.args);
+        cmd.args(claude_extra_args(&self.config.extra_args)?);
         for (name, value) in &tooling.env {
             cmd.env(name, value);
         }
@@ -268,6 +348,25 @@ fn claude_schema(schema: &Value) -> Result<String, TurnError> {
     }
 }
 
+/// The operator's extra arguments, refused when one repeats a flag the
+/// provider renders itself (as `--flag` or `--flag=value`).
+fn claude_extra_args(args: &[String]) -> Result<&[String], TurnError> {
+    let repeated = args.iter().find(|arg| {
+        let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
+        PROVIDER_FLAGS.contains(&flag)
+    });
+    match repeated {
+        Some(arg) => Err(TurnError::Config {
+            message: format!(
+                "the extra Claude Code argument `{arg}` repeats a flag the provider renders \
+                 itself; set it through the agent (model, effort, output schema, tools) or \
+                 the turn instead"
+            ),
+        }),
+        None => Ok(args),
+    }
+}
+
 impl Default for ClaudeProvider {
     fn default() -> Self {
         Self::new()
@@ -277,7 +376,7 @@ impl Default for ClaudeProvider {
 #[async_trait]
 impl Provider for ClaudeProvider {
     fn name(&self) -> &str {
-        "claude"
+        &self.config.name
     }
 
     async fn execute_turn(
@@ -679,6 +778,95 @@ mod tests {
                 Err(other) => prop_assert!(false, "unexpected class: {other:?}"),
             }
         }
+    }
+
+    fn bare_request() -> TurnRequest {
+        TurnRequest::new(
+            TurnIdentity {
+                run_id: "r".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            AgentDirectives::new("a", "i"),
+            "hello",
+            SessionDirective::Start,
+        )
+    }
+
+    #[test]
+    fn working_directory_places_the_harness_or_fails_typed() {
+        let provider = ClaudeProvider::new();
+        let directory = std::env::temp_dir();
+        let mut placed = bare_request();
+        placed.directives.working_directory = Some(directory.clone());
+        let cmd = provider
+            .build_command(&placed)
+            .expect("an existing directory");
+        assert_eq!(cmd.as_std().get_current_dir(), Some(directory.as_path()));
+
+        // Unset leaves the harness in the worker's own directory.
+        let cmd = provider
+            .build_command(&bare_request())
+            .expect("no directory set");
+        assert_eq!(cmd.as_std().get_current_dir(), None);
+
+        // A missing directory is a configuration error before any spawn,
+        // not a spawn failure that reads like a missing binary.
+        let missing = directory.join("odori-no-such-directory");
+        let mut misplaced = bare_request();
+        misplaced.directives.working_directory = Some(missing.clone());
+        match provider.build_command(&misplaced) {
+            Err(TurnError::Config { message }) => {
+                assert!(
+                    message.contains(&missing.display().to_string()),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a typed configuration error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extra_arguments_append_but_never_repeat_provider_flags() {
+        let provider = ClaudeProvider::with_config(
+            ClaudeConfig::default().with_args(["--max-budget-usd", "2.5"]),
+        );
+        let cmd = provider
+            .build_command(&bare_request())
+            .expect("extra arguments render");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args[args.len() - 2..], ["--max-budget-usd", "2.5"]);
+
+        for repeated in ["--output-format=text", "--model", "-p"] {
+            let provider =
+                ClaudeProvider::with_config(ClaudeConfig::default().with_args([repeated, "x"]));
+            match provider.build_command(&bare_request()) {
+                Err(TurnError::Config { message }) => {
+                    assert!(message.contains(repeated), "{message}");
+                }
+                other => panic!("expected a typed configuration error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_configured_name_is_the_provider_name() {
+        assert_eq!(ClaudeProvider::new().name(), "claude");
+        let named =
+            ClaudeProvider::with_config(ClaudeConfig::default().with_name("claude-reviewer"));
+        assert_eq!(named.name(), "claude-reviewer");
+    }
+
+    #[test]
+    fn debug_output_names_environment_entries_without_their_values() {
+        let config = ClaudeConfig::default().with_env("ANTHROPIC_API_KEY", "not-a-real-key-7f3a");
+        let rendered = format!("{:?}", ClaudeProvider::with_config(config));
+        assert!(rendered.contains("ANTHROPIC_API_KEY"), "{rendered}");
+        assert!(!rendered.contains("not-a-real-key-7f3a"), "{rendered}");
     }
 
     #[test]

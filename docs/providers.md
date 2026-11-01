@@ -34,7 +34,15 @@ can be selected with `ClaudeConfig::with_binary`.
 At turn start, the provider removes inherited `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_API_KEY` so subscription
 authentication comes from Claude Code's own store. Explicit
-`ClaudeConfig::with_env` values are applied afterward.
+`ClaudeConfig::with_env` values are applied afterward. A `ClaudeConfig`'s
+debug output names those entries but never prints their values.
+
+`ClaudeConfig::with_name` registers an instance under another name, so
+differently configured instances can serve side by side, and
+`ClaudeConfig::with_args` appends arguments to every invocation, such as
+`--max-budget-usd 5`. An argument that repeats a flag the provider renders
+itself (session, prompt, output format, system prompt, model, effort, schema,
+or tooling) fails before spawn as a non-retryable `TurnError::Config`.
 
 The provider warns, but does not refuse to run, when `claude --version`
 differs from 2.1.220. Unknown stream events remain liveness. Authentication
@@ -57,7 +65,7 @@ When the model never submits a valid value within the harness's own retries
 (five by default), the turn fails as a retryable `TurnError::Api` that keeps
 the harness's reason.
 
-Provider name: `claude`.
+Provider name: `claude`, or the name `ClaudeConfig::with_name` gives.
 
 ## Codex subscription
 
@@ -198,6 +206,18 @@ An agent-level effort always overrides it, `Effort::None` included.
 With thinking enabled, streamed thinking blocks are assembled verbatim —
 text and signature — so the internal tool loop's assistant echo
 satisfies the API's thinking contract.
+
+## Working directory
+
+`Agent::with_working_directory` runs an agent's turns in a directory other
+than the worker's own. Claude Code starts in that directory, which is also
+where it looks for the project's `CLAUDE.md` and settings. Codex starts its
+app-server there and opens the thread with that directory as its `cwd`. A
+relative path resolves against the worker's working directory when the turn
+starts. A directory that does not exist fails the turn before spawn as a
+non-retryable `TurnError::Config`, as does a path Codex cannot receive
+because it is not UTF-8. The API providers run no harness process and ignore
+the setting.
 
 ## Error surfaces
 
