@@ -114,9 +114,24 @@ impl Runner {
         prompt: &str,
         run_id: &str,
     ) -> Result<Conversation, RunnerError> {
+        self.start_conversation_with_config(agent, prompt, run_id, RunConfig::default())
+            .await
+    }
+
+    /// Start an interactive run with explicit configuration (budgets,
+    /// timeouts, attempts). The run is interactive whatever
+    /// `config.interactive` says: a conversation always waits for the next
+    /// message.
+    pub async fn start_conversation_with_config(
+        &self,
+        agent: &str,
+        prompt: &str,
+        run_id: &str,
+        config: RunConfig,
+    ) -> Result<Conversation, RunnerError> {
         let config = RunConfig {
             interactive: true,
-            ..RunConfig::default()
+            ..config
         };
         let telemetry = telemetry::ClientRunTelemetry::start(agent, run_id);
         let started = telemetry
