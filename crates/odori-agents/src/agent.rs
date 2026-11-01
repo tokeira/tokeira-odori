@@ -8,7 +8,7 @@
 //! The serializable slice a backend needs travels as
 //! [`crate::provider::AgentDirectives`].
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -35,6 +35,7 @@ pub struct Agent {
     output_guardrails: Vec<Arc<dyn Guardrail>>,
     output_schema: Option<Value>,
     budget: RunBudget,
+    working_directory: Option<PathBuf>,
 }
 
 impl Agent {
@@ -53,6 +54,7 @@ impl Agent {
             output_guardrails: Vec::new(),
             output_schema: None,
             budget: RunBudget::unlimited(),
+            working_directory: None,
         }
     }
 
@@ -128,6 +130,17 @@ impl Agent {
         self
     }
 
+    /// Run the agent's turns in `directory` instead of the worker's own
+    /// working directory: the harness process starts there, and a backend
+    /// with a workspace of its own (Codex's thread `cwd`) uses it too. A
+    /// directory that does not exist fails the turn before spawn as a
+    /// configuration error. Providers that run no harness process (the API
+    /// tier) ignore it.
+    pub fn with_working_directory(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.working_directory = Some(directory.into());
+        self
+    }
+
     /// The agent's name.
     pub fn name(&self) -> &str {
         &self.name
@@ -171,6 +184,7 @@ impl Agent {
             model: self.model.clone(),
             effort: self.effort,
             output_schema: self.output_schema.clone(),
+            working_directory: self.working_directory.clone(),
         }
     }
 
@@ -269,11 +283,20 @@ mod tests {
                 .with_effort(Effort::High)
                 .with_input_guardrail(NoPirates)
                 .with_handoff(Handoff::new("specialist"))
-                .with_allowed_native_tools(["Bash"]),
+                .with_allowed_native_tools(["Bash"])
+                .with_working_directory("/srv/task"),
         );
         let agent = registry.get("helper").expect("registered");
         assert_eq!(agent.directives().model.as_deref(), Some("m1"));
         assert_eq!(agent.directives().effort, Some(Effort::High));
+        assert_eq!(
+            agent.directives().working_directory,
+            Some(PathBuf::from("/srv/task"))
+        );
+        assert_eq!(
+            Agent::new("plain", "assist").directives().working_directory,
+            None
+        );
         assert_eq!(
             agent.tooling().allowed_native_tools,
             Some(vec!["Bash".to_owned()])

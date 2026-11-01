@@ -226,6 +226,9 @@ fn main() {
             if schema.is_some() {
                 markers.push("schema".to_owned());
             }
+            if let Ok(directory) = std::env::current_dir() {
+                markers.push(format!("cwd={}", directory.display()));
+            }
             let text = format!("echo: {prompt} [{}]", markers.join(" "));
             emit(&json!({"type": "assistant", "message": {"content": [
                 {"type": "text", "text": text}]}}));

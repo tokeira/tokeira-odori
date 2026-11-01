@@ -178,6 +178,19 @@ impl ClaudeProvider {
 
     fn build_command(&self, request: &TurnRequest) -> Result<Command, TurnError> {
         let mut cmd = Command::new(&self.config.binary);
+        if let Some(directory) = &request.directives.working_directory {
+            // Checked here because a missing directory fails the spawn
+            // itself, which would read as a missing harness binary.
+            if !directory.is_dir() {
+                return Err(TurnError::Config {
+                    message: format!(
+                        "the agent's working directory {} is not a directory",
+                        directory.display()
+                    ),
+                });
+            }
+            cmd.current_dir(directory);
+        }
         match &request.session {
             SessionDirective::Start => {}
             SessionDirective::Resume { session_id } => {
@@ -678,6 +691,52 @@ mod tests {
                 }
                 Err(other) => prop_assert!(false, "unexpected class: {other:?}"),
             }
+        }
+    }
+
+    fn bare_request() -> TurnRequest {
+        TurnRequest::new(
+            TurnIdentity {
+                run_id: "r".into(),
+                turn: 0,
+                attempt: 1,
+            },
+            AgentDirectives::new("a", "i"),
+            "hello",
+            SessionDirective::Start,
+        )
+    }
+
+    #[test]
+    fn working_directory_places_the_harness_or_fails_typed() {
+        let provider = ClaudeProvider::new();
+        let directory = std::env::temp_dir();
+        let mut placed = bare_request();
+        placed.directives.working_directory = Some(directory.clone());
+        let cmd = provider
+            .build_command(&placed)
+            .expect("an existing directory");
+        assert_eq!(cmd.as_std().get_current_dir(), Some(directory.as_path()));
+
+        // Unset leaves the harness in the worker's own directory.
+        let cmd = provider
+            .build_command(&bare_request())
+            .expect("no directory set");
+        assert_eq!(cmd.as_std().get_current_dir(), None);
+
+        // A missing directory is a configuration error before any spawn,
+        // not a spawn failure that reads like a missing binary.
+        let missing = directory.join("odori-no-such-directory");
+        let mut misplaced = bare_request();
+        misplaced.directives.working_directory = Some(missing.clone());
+        match provider.build_command(&misplaced) {
+            Err(TurnError::Config { message }) => {
+                assert!(
+                    message.contains(&missing.display().to_string()),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a typed configuration error, got {other:?}"),
         }
     }
 

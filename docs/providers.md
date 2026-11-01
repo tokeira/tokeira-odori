@@ -199,6 +199,18 @@ With thinking enabled, streamed thinking blocks are assembled verbatim —
 text and signature — so the internal tool loop's assistant echo
 satisfies the API's thinking contract.
 
+## Working directory
+
+`Agent::with_working_directory` runs an agent's turns in a directory other
+than the worker's own. Claude Code starts in that directory, which is also
+where it looks for the project's `CLAUDE.md` and settings. Codex starts its
+app-server there and opens the thread with that directory as its `cwd`. A
+relative path resolves against the worker's working directory when the turn
+starts. A directory that does not exist fails the turn before spawn as a
+non-retryable `TurnError::Config`, as does a path Codex cannot receive
+because it is not UTF-8. The API providers run no harness process and ignore
+the setting.
+
 ## Error surfaces
 
 Providers map failures to one public taxonomy:

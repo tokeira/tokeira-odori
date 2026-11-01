@@ -22,8 +22,29 @@ fn request(input: &str) -> TurnRequest {
     )
 }
 
+/// A turn the scripted app-server accepts: high effort, and a bridged MCP
+/// server whose bearer token rides the environment.
 #[cfg(unix)]
-fn scripted_codex() -> std::path::PathBuf {
+fn bridged_request(input: &str) -> TurnRequest {
+    let mut turn = request(input);
+    turn.directives.effort = Some(Effort::High);
+    turn.tooling.mcp_servers.push(McpServerConfig {
+        name: "odori".into(),
+        transport: McpTransport::Http {
+            url: "http://127.0.0.1:9999/mcp".into(),
+            headers: vec![("Authorization".into(), "Bearer test-token".into())],
+        },
+    });
+    turn.tooling.allowed_native_tools = Some(vec!["mcp__odori__deploy".into()]);
+    turn.tooling.mcp_timeout = Some(Duration::from_secs(120));
+    turn
+}
+
+/// The scripted app-server. With `expected_cwd`, `thread/start` also
+/// refuses unless both the thread's `cwd` and the process's own directory
+/// are that directory.
+#[cfg(unix)]
+fn scripted_codex(expected_cwd: Option<&std::path::Path>) -> std::path::PathBuf {
     use std::{
         fs,
         os::unix::fs::PermissionsExt,
@@ -38,11 +59,17 @@ fn scripted_codex() -> std::path::PathBuf {
         "odori-fake-codex-{}-{nonce}.py",
         std::process::id()
     ));
+    let expected_cwd = expected_cwd.map_or_else(
+        || "None".to_owned(),
+        |directory| format!("{:?}", directory.display().to_string()),
+    );
     let script = format!(
         r#"#!/usr/bin/env python3
 import json
 import os
 import sys
+
+EXPECTED_CWD = {expected_cwd}
 
 if sys.argv[1:] == ["--version"]:
     print({expected:?})
@@ -64,6 +91,12 @@ for line in sys.stdin:
     elif method == "initialized":
         pass
     elif method == "thread/start":
+        if EXPECTED_CWD is not None:
+            expected = os.path.realpath(EXPECTED_CWD)
+            if (os.path.realpath(message["params"]["cwd"]) != expected
+                    or os.path.realpath(os.getcwd()) != expected):
+                emit({{"id": request_id, "error": {{"code": -32600, "message": "wrong working directory"}}}})
+                continue
         config = message["params"]["config"]
         token_variable = config["mcp_servers.odori.env_http_headers"]["Authorization"]
         if os.environ.get(token_variable) != "Bearer test-token":
@@ -95,20 +128,10 @@ for line in sys.stdin:
 #[cfg(unix)]
 #[tokio::test]
 async fn scripted_app_server_turn_streams_events_and_result() {
-    let command = scripted_codex();
+    let command = scripted_codex(None);
     let provider = CodexProvider::with_command(&command);
     let (sender, mut receiver) = mpsc::channel(32);
-    let mut turn = request("run the fake turn");
-    turn.directives.effort = Some(Effort::High);
-    turn.tooling.mcp_servers.push(McpServerConfig {
-        name: "odori".into(),
-        transport: McpTransport::Http {
-            url: "http://127.0.0.1:9999/mcp".into(),
-            headers: vec![("Authorization".into(), "Bearer test-token".into())],
-        },
-    });
-    turn.tooling.allowed_native_tools = Some(vec!["mcp__odori__deploy".into()]);
-    turn.tooling.mcp_timeout = Some(Duration::from_secs(120));
+    let turn = bridged_request("run the fake turn");
 
     let outcome = provider
         .execute_turn(turn, TurnEventSink::new(sender))
@@ -165,7 +188,7 @@ async fn unmappable_effort_fails_typed_before_the_session_spawns() {
     // handler would reject anything but `high`, so the xhigh-shaped
     // configuration error proves Max was rejected before an app-server
     // session ever started.
-    let command = scripted_codex();
+    let command = scripted_codex(None);
     let provider = CodexProvider::with_command(&command);
     let (sender, _receiver) = mpsc::channel(4);
     let mut turn = request("never runs");
@@ -175,6 +198,51 @@ async fn unmappable_effort_fails_typed_before_the_session_spawns() {
         .await
     {
         Err(TurnError::Config { message }) => assert!(message.contains("xhigh"), "{message}"),
+        other => panic!("expected a typed configuration error, got {other:?}"),
+    }
+    std::fs::remove_file(command).expect("remove fake Codex executable");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn working_directory_is_the_thread_and_process_directory() {
+    let directory = std::env::temp_dir().join(format!("odori-codex-cwd-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create the agent's directory");
+    let command = scripted_codex(Some(&directory));
+    let provider = CodexProvider::with_command(&command);
+    let (sender, _receiver) = mpsc::channel(32);
+    let mut turn = bridged_request("run in the agent's directory");
+    turn.directives.working_directory = Some(directory.clone());
+    let outcome = provider
+        .execute_turn(turn, TurnEventSink::new(sender))
+        .await
+        .expect("the fake accepts the thread's directory and its own");
+    assert_eq!(outcome.text, "fake-ok");
+    std::fs::remove_file(command).expect("remove fake Codex executable");
+    std::fs::remove_dir(&directory).expect("remove the agent's directory");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn missing_working_directory_fails_typed_before_the_app_server_spawns() {
+    // A spawned fake would refuse this unbridged turn with its own error;
+    // the error naming the directory proves nothing spawned.
+    let command = scripted_codex(None);
+    let provider = CodexProvider::with_command(&command);
+    let (sender, _receiver) = mpsc::channel(4);
+    let missing = std::env::temp_dir().join("odori-no-such-directory");
+    let mut turn = request("never runs");
+    turn.directives.working_directory = Some(missing.clone());
+    match provider
+        .execute_turn(turn, TurnEventSink::new(sender))
+        .await
+    {
+        Err(TurnError::Config { message }) => {
+            assert!(
+                message.contains(&missing.display().to_string()),
+                "{message}"
+            );
+        }
         other => panic!("expected a typed configuration error, got {other:?}"),
     }
     std::fs::remove_file(command).expect("remove fake Codex executable");

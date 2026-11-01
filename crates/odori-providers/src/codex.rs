@@ -142,7 +142,8 @@ async fn run_app_server(
     // configuration error, never a mid-session protocol failure.
     let effort = request.directives.effort.map(codex_effort).transpose()?;
     let tooling = render_tooling(&request.tooling)?;
-    let mut process = AppServerProcess::spawn(&provider.command, &tooling.env).await?;
+    let directory = turn_directory(&request)?;
+    let mut process = AppServerProcess::spawn(&provider.command, &tooling.env, &directory).await?;
 
     let initialize = process
         .request(
@@ -169,11 +170,8 @@ async fn run_app_server(
         return Err(finish_driver_error(process, error, DriverPhase::Initialize).await);
     }
 
-    let current_dir = std::env::current_dir().map_err(|error| TurnError::Config {
-        message: format!("cannot resolve the Codex turn working directory: {error}"),
-    })?;
     let mut session_params = json!({
-        "cwd": current_dir,
+        "cwd": directory,
         "approvalPolicy": "never",
         "sandbox": "workspace-write",
         "developerInstructions": developer_instructions(&request),
@@ -571,6 +569,42 @@ fn auth_error(detail: &str) -> TurnError {
     }
 }
 
+/// The directory a turn runs in, both the app-server's and the thread's
+/// `cwd`: the agent's (relative to the worker's), or the worker's own. It
+/// is checked before anything spawns, because a missing directory fails
+/// the spawn itself and would read as a missing CLI, and the protocol
+/// carries it as a JSON string.
+fn turn_directory(request: &TurnRequest) -> Result<PathBuf, TurnError> {
+    let worker = || {
+        std::env::current_dir().map_err(|error| TurnError::Config {
+            message: format!("cannot resolve the Codex turn working directory: {error}"),
+        })
+    };
+    let directory = match &request.directives.working_directory {
+        Some(directory) if directory.is_absolute() => directory.clone(),
+        Some(relative) => worker()?.join(relative),
+        None => worker()?,
+    };
+    if !directory.is_dir() {
+        return Err(TurnError::Config {
+            message: format!(
+                "the agent's working directory {} is not a directory",
+                directory.display()
+            ),
+        });
+    }
+    if directory.to_str().is_none() {
+        return Err(TurnError::Config {
+            message: format!(
+                "the agent's working directory {} is not valid UTF-8, which the app-server \
+                 protocol requires",
+                directory.display()
+            ),
+        });
+    }
+    Ok(directory)
+}
+
 fn command_with_hygiene(command: &Path) -> Command {
     let mut process = Command::new(command);
     // Subscription auth must come from CODEX_HOME's credential store, not an
@@ -643,10 +677,15 @@ struct AppServerProcess {
 }
 
 impl AppServerProcess {
-    async fn spawn(command: &Path, env: &[(String, String)]) -> Result<Self, TurnError> {
+    async fn spawn(
+        command: &Path,
+        env: &[(String, String)],
+        directory: &Path,
+    ) -> Result<Self, TurnError> {
         let mut command_line = command_with_hygiene(command);
         command_line
             .args(["app-server", "--listen", "stdio://", "--strict-config"])
+            .current_dir(directory)
             .envs(env.iter().cloned())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

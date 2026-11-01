@@ -197,6 +197,32 @@ async fn model_and_schema_directives_reach_the_harness() {
 }
 
 #[tokio::test]
+async fn working_directory_is_where_the_harness_runs() {
+    let directory = std::env::temp_dir().join(format!("odori-claude-cwd-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create the agent's directory");
+    let provider = provider_with(&[]);
+    let (events, _receiver) = sink();
+    let mut req = request("where", SessionDirective::Start);
+    req.directives.working_directory = Some(directory.clone());
+    let outcome = provider
+        .execute_turn(req, events)
+        .await
+        .expect("turn succeeds");
+
+    // The harness reports its physical directory, and a temp path may sit
+    // behind a symlink (macOS's /var), so compare canonical forms.
+    let expected = std::fs::canonicalize(&directory).expect("canonical directory");
+    assert!(
+        outcome
+            .text
+            .contains(&format!("cwd={}", expected.display())),
+        "{}",
+        outcome.text
+    );
+    std::fs::remove_dir(&directory).expect("remove the agent's directory");
+}
+
+#[tokio::test]
 async fn exhausted_schema_retries_are_retryable_and_keep_the_reason() {
     let provider = provider_with(&[("FAKE_CLAUDE_MODE", "schema_retries")]);
     let (events, _receiver) = sink();
