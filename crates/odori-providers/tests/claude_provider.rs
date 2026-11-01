@@ -223,6 +223,27 @@ async fn working_directory_is_where_the_harness_runs() {
 }
 
 #[tokio::test]
+async fn named_instance_carries_its_extra_arguments() {
+    let provider = ClaudeProvider::with_config(
+        ClaudeConfig::default()
+            .with_binary(env!("CARGO_BIN_EXE_odori-fake-claude"))
+            .with_name("claude-capped")
+            .with_args(["--max-budget-usd", "2.5"]),
+    );
+    assert_eq!(provider.name(), "claude-capped");
+    let (events, _receiver) = sink();
+    let outcome = provider
+        .execute_turn(request("capped", SessionDirective::Start), events)
+        .await
+        .expect("turn succeeds");
+    assert!(
+        outcome.text.contains("max-budget-usd=2.5"),
+        "{}",
+        outcome.text
+    );
+}
+
+#[tokio::test]
 async fn exhausted_schema_retries_are_retryable_and_keep_the_reason() {
     let provider = provider_with(&[("FAKE_CLAUDE_MODE", "schema_retries")]);
     let (events, _receiver) = sink();

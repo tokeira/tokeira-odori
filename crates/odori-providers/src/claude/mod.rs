@@ -57,10 +57,37 @@ const SCRUBBED_ENV: &[&str] = &[
     "ANTHROPIC_API_KEY",
 ];
 
+/// Flags the provider renders itself. An extra argument repeating one would
+/// fight that rendering — a second `--output-format` breaks stream
+/// supervision, a second `--resume` the session contract — so it fails
+/// before spawn like any other configuration error.
+const PROVIDER_FLAGS: &[&str] = &[
+    "-p",
+    "--print",
+    "--output-format",
+    "--verbose",
+    "-r",
+    "--resume",
+    "--fork-session",
+    "--append-system-prompt",
+    "--model",
+    "--effort",
+    "--json-schema",
+    "--mcp-config",
+    "--allowedTools",
+    "--allowed-tools",
+];
+
 /// Configuration for [`ClaudeProvider`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ClaudeConfig {
+    /// The provider name agents select this instance by
+    /// ([`Agent::with_provider`](odori_agents::Agent::with_provider)),
+    /// `"claude"` by default. Distinct names let differently configured
+    /// instances serve side by side; telemetry reports the name as the
+    /// turn's provider.
+    pub name: String,
     /// The harness binary; `"claude"` resolves via `PATH`. Point it at a
     /// test double for scripted runs.
     pub binary: PathBuf,
@@ -69,19 +96,31 @@ pub struct ClaudeConfig {
     /// Extra environment entries for the spawned harness (applied after
     /// scrubbing, so a deliberate operator override wins).
     pub extra_env: Vec<(String, String)>,
+    /// Extra arguments for every turn's `claude` invocation, appended after
+    /// the provider's own (e.g. `--max-budget-usd 5`). One that repeats a
+    /// flag the provider renders itself fails the turn before spawn.
+    pub extra_args: Vec<String>,
 }
 
 impl Default for ClaudeConfig {
     fn default() -> Self {
         Self {
+            name: "claude".to_owned(),
             binary: PathBuf::from("claude"),
             default_deadline: Duration::from_secs(600),
             extra_env: Vec::new(),
+            extra_args: Vec::new(),
         }
     }
 }
 
 impl ClaudeConfig {
+    /// Register this instance under `name` instead of `"claude"`.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
     /// Use a specific harness binary.
     pub fn with_binary(mut self, binary: impl Into<PathBuf>) -> Self {
         self.binary = binary.into();
@@ -91,6 +130,12 @@ impl ClaudeConfig {
     /// Add an environment entry for the spawned harness.
     pub fn with_env(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.extra_env.push((name.into(), value.into()));
+        self
+    }
+
+    /// Append arguments to every turn's `claude` invocation.
+    pub fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.extra_args.extend(args.into_iter().map(Into::into));
         self
     }
 }
@@ -218,6 +263,7 @@ impl ClaudeProvider {
         }
         let tooling = render_tooling(&request.tooling);
         cmd.args(&tooling.args);
+        cmd.args(claude_extra_args(&self.config.extra_args)?);
         for (name, value) in &tooling.env {
             cmd.env(name, value);
         }
@@ -281,6 +327,25 @@ fn claude_schema(schema: &Value) -> Result<String, TurnError> {
     }
 }
 
+/// The operator's extra arguments, refused when one repeats a flag the
+/// provider renders itself (as `--flag` or `--flag=value`).
+fn claude_extra_args(args: &[String]) -> Result<&[String], TurnError> {
+    let repeated = args.iter().find(|arg| {
+        let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
+        PROVIDER_FLAGS.contains(&flag)
+    });
+    match repeated {
+        Some(arg) => Err(TurnError::Config {
+            message: format!(
+                "the extra Claude Code argument `{arg}` repeats a flag the provider renders \
+                 itself; set it through the agent (model, effort, output schema, tools) or \
+                 the turn instead"
+            ),
+        }),
+        None => Ok(args),
+    }
+}
+
 impl Default for ClaudeProvider {
     fn default() -> Self {
         Self::new()
@@ -290,7 +355,7 @@ impl Default for ClaudeProvider {
 #[async_trait]
 impl Provider for ClaudeProvider {
     fn name(&self) -> &str {
-        "claude"
+        &self.config.name
     }
 
     async fn execute_turn(
@@ -738,6 +803,41 @@ mod tests {
             }
             other => panic!("expected a typed configuration error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn extra_arguments_append_but_never_repeat_provider_flags() {
+        let provider = ClaudeProvider::with_config(
+            ClaudeConfig::default().with_args(["--max-budget-usd", "2.5"]),
+        );
+        let cmd = provider
+            .build_command(&bare_request())
+            .expect("extra arguments render");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args[args.len() - 2..], ["--max-budget-usd", "2.5"]);
+
+        for repeated in ["--output-format=text", "--model", "-p"] {
+            let provider =
+                ClaudeProvider::with_config(ClaudeConfig::default().with_args([repeated, "x"]));
+            match provider.build_command(&bare_request()) {
+                Err(TurnError::Config { message }) => {
+                    assert!(message.contains(repeated), "{message}");
+                }
+                other => panic!("expected a typed configuration error, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_configured_name_is_the_provider_name() {
+        assert_eq!(ClaudeProvider::new().name(), "claude");
+        let named =
+            ClaudeProvider::with_config(ClaudeConfig::default().with_name("claude-reviewer"));
+        assert_eq!(named.name(), "claude-reviewer");
     }
 
     #[test]
