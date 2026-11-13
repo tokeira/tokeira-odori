@@ -23,7 +23,7 @@ against the most recent release.
 - **History is durable.** Workflow inputs, activity results, and tool results
   may be retained in engine history. Do not put a secret in agent input or tool
   output unless that retention is explicitly acceptable.
-- **Durable tools are locally fenced.** The preview MCP bridge listens on
+- **Durable tools are locally fenced.** The preview MCP tool server listens on
   loopback, mints a bearer token per attempt, fences stale attempts, and evicts
   a run's tokens after terminal state is confirmed.
 - **Unsafe Rust is denied workspace-wide** (`unsafe_code = "deny"`).

@@ -1,4 +1,4 @@
-//! Storage-mode contract tests for Odori's E1 engine wrapper.
+//! Storage-mode contract tests for Odori's embedded-engine wrapper.
 //!
 //! The in-memory legs are ordinary unguarded tests. The two DSQL legs are
 //! ignored and separately environment-authorized because they use live AWS.
@@ -85,7 +85,7 @@ impl Provider for RestartProvider {
         events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let session_id = format!("restart-session-{}", request.identity.turn);
+        let session_id = format!("restart-session-{}", request.turn_id.turn);
         events.emit(TurnEvent::SessionStarted {
             session_id: session_id.clone(),
         });

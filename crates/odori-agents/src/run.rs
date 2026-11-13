@@ -27,7 +27,7 @@
 //! or drain first.
 //!
 //! Framework tool calls enter through the `tool_invoked` workflow update.
-//! Its invocation registry is workflow state, keyed by turn and harness call
+//! Its tool-call tracker is workflow state, keyed by turn and harness call
 //! identity, so completed results replay and superseded attempts are fenced.
 
 // The temporalio macro family (`#[workflow]`, `#[workflow_methods]`,
@@ -59,13 +59,13 @@ use crate::{
     agent::AgentRegistry,
     guardrail::{GuardrailVerdict, RunBudget},
     handoff::{Handoff, HandoffContext},
-    invocation::{Admission, InvocationId, InvocationRegistry, ToolCallResult},
     provider::{
         Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent, TurnEventSink,
-        TurnIdentity, TurnOutcome, TurnRequest, TurnUsage,
+        TurnId, TurnOutcome, TurnRequest, TurnUsage,
     },
     telemetry,
-    tool::{ToolContext, ToolFailure, ToolPolicy},
+    tool::{ToolContext, ToolExecutionPolicy, ToolFailure},
+    tool_call::{ToolCallAdmission, ToolCallId, ToolCallResult, ToolCallTracker},
 };
 
 /// Input starting one run.
@@ -248,7 +248,7 @@ impl RunUsage {
 /// Why the run ended.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub enum RunEnd {
+pub enum RunEndReason {
     /// The (non-interactive) run's turn completed.
     Completed,
     /// An interactive run was ended by `end_conversation`.
@@ -308,7 +308,7 @@ pub struct RunOutput {
     /// Number of completed direct and delegated turns.
     pub turns: u32,
     /// Why the run ended.
-    pub end: RunEnd,
+    pub end: RunEndReason,
 }
 
 /// The run-loop workflow. One instance per run; construct via the factory
@@ -328,8 +328,8 @@ pub struct AgentRun {
     /// Agent under execution, set before the first turn; the `tool_invoked`
     /// update resolves tools through it.
     agent_name: Option<String>,
-    /// The durable framework-tool invocation registry.
-    invocations: InvocationRegistry,
+    /// The durable tracker for framework tool calls.
+    tool_calls: ToolCallTracker,
     /// Effective runner/agent caps, retained for handoff child budgeting.
     effective_budget: Option<RunBudget>,
     /// Completed handoff children. Kept in workflow state so the parent run
@@ -384,7 +384,7 @@ impl AgentRun {
                 session_id: None,
                 usage,
                 turns: 0,
-                end: RunEnd::GuardrailBlocked {
+                end: RunEndReason::GuardrailBlocked {
                     guardrail: name,
                     reason,
                 },
@@ -397,7 +397,7 @@ impl AgentRun {
 
             // Budget gates, between turns.
             if let Some(cap) = pre_turn_budget_cap(&effective_budget, &usage, budget_turns) {
-                end = RunEnd::BudgetExceeded { cap };
+                end = RunEndReason::BudgetExceeded { cap };
                 break;
             }
 
@@ -453,13 +453,13 @@ impl AgentRun {
             // aggregate turn is in flight. Record that turn first, then end
             // cleanly with its complete accounting.
             if let Some(cap) = post_turn_budget_cap(&effective_budget, &usage, budget_turns) {
-                end = RunEnd::BudgetExceeded { cap };
+                end = RunEndReason::BudgetExceeded { cap };
                 break;
             }
 
             // Output guardrails.
             if let Some((name, reason)) = trip(agent.output_guardrails(), &outcome.text) {
-                end = RunEnd::GuardrailBlocked {
+                end = RunEndReason::GuardrailBlocked {
                     guardrail: name,
                     reason,
                 };
@@ -467,7 +467,7 @@ impl AgentRun {
             }
 
             if !input.config.interactive {
-                end = RunEnd::Completed;
+                end = RunEndReason::Completed;
                 break;
             }
 
@@ -480,7 +480,7 @@ impl AgentRun {
             .await?;
             next_input = ctx.state_mut(|state| state.pending_messages.pop_front());
             if next_input.is_none() {
-                end = RunEnd::ConversationEnded;
+                end = RunEndReason::ConversationEnded;
                 break;
             }
         }
@@ -527,73 +527,73 @@ impl AgentRun {
 
     /// The mcp-bridge data path: one mid-turn tool call, made durable.
     ///
-    /// Validate against the spec's contract-policy table, admit through the
-    /// invocation registry, schedule `execute_tool` with the tool's policy
+    /// Validate the tool call, admit it through the
+    /// tool-call tracker, schedule `execute_tool` with the tool's policy
     /// on a fresh admission, and complete the update only once the result
-    /// is recorded — record-before-respond (Property 2) is structural: the
+    /// is recorded — record-before-respond is structural: the
     /// update cannot complete before its effects are in history.
     #[update]
     pub async fn tool_invoked(
         ctx: &mut WorkflowContext<Self>,
-        invocation: ToolInvocation,
-    ) -> ToolInvocationReply {
+        tool_call: ToolCallRequest,
+    ) -> ToolCallReply {
         // Contract-policy validation.
-        if invocation.identity.call_id.is_empty() {
-            return ToolInvocationReply::Rejected(InvocationRejection::InvalidCallId);
+        if tool_call.tool_call_id.call_id.is_empty() {
+            return ToolCallReply::Rejected(ToolCallRejection::InvalidCallId);
         }
         let current_turn = ctx.state(|state| state.transcript.len() as u32);
-        if invocation.identity.turn > current_turn {
-            return ToolInvocationReply::Rejected(InvocationRejection::UnknownTurn);
+        if tool_call.tool_call_id.turn > current_turn {
+            return ToolCallReply::Rejected(ToolCallRejection::UnknownTurn);
         }
         let agent = {
             let registry = ctx.state(|state| state.registry.clone());
             let Some(name) = ctx.state(|state| state.agent_name.clone()) else {
-                return ToolInvocationReply::Rejected(InvocationRejection::UnknownTurn);
+                return ToolCallReply::Rejected(ToolCallRejection::UnknownTurn);
             };
             match registry.get(&name) {
                 Ok(agent) => agent,
-                Err(_) => return ToolInvocationReply::Rejected(InvocationRejection::UnknownTool),
+                Err(_) => return ToolCallReply::Rejected(ToolCallRejection::UnknownTool),
             }
         };
         let tool_policy = agent
             .tools()
             .iter()
-            .find(|tool| tool.name() == invocation.tool)
+            .find(|tool| tool.name() == tool_call.tool)
             .map(|tool| tool.policy().clone());
         let handoff = agent
             .handoffs()
             .iter()
-            .find(|handoff| handoff.tool_name() == invocation.tool)
+            .find(|handoff| handoff.tool_name() == tool_call.tool)
             .cloned();
         if tool_policy.is_none() && handoff.is_none() {
-            return ToolInvocationReply::Rejected(InvocationRejection::UnknownTool);
+            return ToolCallReply::Rejected(ToolCallRejection::UnknownTool);
         }
 
         let admission = ctx.state_mut(|state| {
             state
-                .invocations
-                .admit(&invocation.identity, &invocation.tool)
+                .tool_calls
+                .admit(&tool_call.tool_call_id, &tool_call.tool)
         });
         match admission {
-            Admission::Recorded(result) => ToolInvocationReply::Completed(result),
-            Admission::Fenced => ToolInvocationReply::Rejected(InvocationRejection::Fenced),
-            Admission::AwaitExisting => {
-                let turn = invocation.identity.turn;
-                let call_id = invocation.identity.call_id.clone();
+            ToolCallAdmission::Recorded(result) => ToolCallReply::Completed(result),
+            ToolCallAdmission::Fenced => ToolCallReply::Rejected(ToolCallRejection::Fenced),
+            ToolCallAdmission::AwaitExisting => {
+                let turn = tool_call.tool_call_id.turn;
+                let call_id = tool_call.tool_call_id.call_id.clone();
                 if ctx
-                    .wait_condition(|state| state.invocations.recorded(turn, &call_id).is_some())
+                    .wait_condition(|state| state.tool_calls.recorded(turn, &call_id).is_some())
                     .await
                     .is_err()
                 {
-                    return ToolInvocationReply::Rejected(InvocationRejection::RunCancelled);
+                    return ToolCallReply::Rejected(ToolCallRejection::RunCancelled);
                 }
-                let result = ctx.state(|state| state.invocations.recorded(turn, &call_id).cloned());
+                let result = ctx.state(|state| state.tool_calls.recorded(turn, &call_id).cloned());
                 match result {
-                    Some(result) => ToolInvocationReply::Completed(result),
-                    None => ToolInvocationReply::Rejected(InvocationRejection::RunCancelled),
+                    Some(result) => ToolCallReply::Completed(result),
+                    None => ToolCallReply::Rejected(ToolCallRejection::RunCancelled),
                 }
             }
-            Admission::Execute(ticket) => {
+            ToolCallAdmission::Execute(ticket) => {
                 let result = match (tool_policy, handoff) {
                     (Some(policy), _) => {
                         let outcome: Result<ToolCallResult, _> = ctx
@@ -601,17 +601,17 @@ impl AgentRun {
                                 ToolActivities::execute_tool,
                                 ExecuteToolInput {
                                     agent: agent.name().to_owned(),
-                                    tool: invocation.tool.clone(),
-                                    arguments: invocation.arguments.clone(),
-                                    identity: invocation.identity.clone(),
+                                    tool: tool_call.tool.clone(),
+                                    arguments: tool_call.arguments.clone(),
+                                    tool_call_id: tool_call.tool_call_id.clone(),
                                 },
                                 tool_activity_options(&policy),
                             )
                             .await;
                         // Tool retry exhaustion is a MODEL-VISIBLE tool failure
-                        // (spec Requirement 6.1), recorded like any result so
+                        //, recorded like any result so
                         // replays serve it identically; it never fails the turn
-                        // (Requirement 6.2).
+                        //
                         match outcome {
                             Ok(result) => result,
                             Err(error) => {
@@ -620,12 +620,12 @@ impl AgentRun {
                         }
                     }
                     (None, Some(handoff)) => {
-                        execute_handoff(ctx, agent.name(), &handoff, &invocation).await
+                        execute_handoff(ctx, agent.name(), &handoff, &tool_call).await
                     }
                     (None, None) => unreachable!("tool kind validated above"),
                 };
-                ctx.state_mut(|state| state.invocations.complete(ticket, result.clone()));
-                ToolInvocationReply::Completed(result)
+                ctx.state_mut(|state| state.tool_calls.complete(ticket, result.clone()));
+                ToolCallReply::Completed(result)
             }
         }
     }
@@ -635,9 +635,9 @@ async fn execute_handoff(
     ctx: &mut WorkflowContext<AgentRun>,
     source_agent: &str,
     handoff: &Handoff,
-    invocation: &ToolInvocation,
+    tool_call: &ToolCallRequest,
 ) -> ToolCallResult {
-    let Some(child_input) = invocation
+    let Some(child_input) = tool_call
         .arguments
         .get("input")
         .and_then(serde_json::Value::as_str)
@@ -670,13 +670,13 @@ async fn execute_handoff(
         input: child_input.clone(),
         parent_workflow_id: workflow_id.clone(),
         parent_run_id: run_id,
-        parent_turn: invocation.identity.turn,
-        call_id: invocation.identity.call_id.clone(),
+        parent_turn: tool_call.tool_call_id.turn,
+        call_id: tool_call.tool_call_id.call_id.clone(),
     };
     let child_id = handoff_workflow_id(
         &workflow_id,
-        invocation.identity.turn,
-        &invocation.identity.call_id,
+        tool_call.tool_call_id.turn,
+        &tool_call.tool_call_id.call_id,
     );
     let child_config = RunConfig::default().with_budget(child_budget);
     let started = match ctx
@@ -704,11 +704,13 @@ async fn execute_handoff(
         }
     };
     let result = match &output.end {
-        RunEnd::Completed | RunEnd::ConversationEnded => ToolCallResult::text(output.text.clone()),
-        RunEnd::BudgetExceeded { cap } => {
+        RunEndReason::Completed | RunEndReason::ConversationEnded => {
+            ToolCallResult::text(output.text.clone())
+        }
+        RunEndReason::BudgetExceeded { cap } => {
             ToolCallResult::error(format!("handoff child budget exceeded: {cap:?}"))
         }
-        RunEnd::GuardrailBlocked { guardrail, reason } => ToolCallResult::error(format!(
+        RunEndReason::GuardrailBlocked { guardrail, reason } => ToolCallResult::error(format!(
             "handoff child guardrail {guardrail:?} blocked the request: {reason}"
         )),
     };
@@ -833,7 +835,7 @@ fn turn_activity_options(config: &RunConfig) -> ActivityOptions {
         .build()
 }
 
-fn tool_activity_options(policy: &ToolPolicy) -> ActivityOptions {
+fn tool_activity_options(policy: &ToolExecutionPolicy) -> ActivityOptions {
     let close_timeouts = match policy.schedule_to_close {
         Some(schedule_to_close) => {
             temporalio_common::ActivityCloseTimeouts::ScheduleAndStartToClose {
@@ -905,11 +907,11 @@ impl From<TurnOutcome> for TurnActivityOutput {
     }
 }
 
-/// Heartbeat details recorded while a turn runs: the recovery anchor a
-/// retried attempt reads.
+/// Session and accumulated usage snapshot saved while a turn runs.
+/// Heartbeats carry it to retry attempts; it does not contain the conversation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TurnHeartbeat {
+pub struct TurnSnapshot {
     /// Backend session id of the in-flight attempt, once known.
     pub session_id: Option<String>,
     /// Aggregate usage from failed attempts plus the latest cumulative
@@ -921,12 +923,12 @@ pub struct TurnHeartbeat {
 /// Provider lookup shared with the worker: implementations keyed by
 /// [`Provider::name`], plus the default used by unbound agents.
 #[derive(Debug, Clone)]
-pub struct Providers {
+pub struct ProviderRegistry {
     default: Arc<dyn Provider>,
     by_name: std::collections::HashMap<String, Arc<dyn Provider>>,
 }
 
-impl Providers {
+impl ProviderRegistry {
     /// A provider set with `default` serving unbound agents.
     pub fn new(default: Arc<dyn Provider>) -> Self {
         let mut by_name = std::collections::HashMap::new();
@@ -967,27 +969,27 @@ pub struct UnknownProvider {
 #[derive(Debug)]
 pub struct TurnActivities {
     registry: Arc<AgentRegistry>,
-    providers: Providers,
-    attachments: Option<Arc<dyn crate::provider::AttachmentSource>>,
+    providers: ProviderRegistry,
+    mcp_bootstrapper: Option<Arc<dyn crate::provider::McpBootstrapper>>,
 }
 
 impl TurnActivities {
     /// Assemble the collection for worker registration.
-    pub fn new(registry: Arc<AgentRegistry>, providers: Providers) -> Self {
+    pub fn new(registry: Arc<AgentRegistry>, providers: ProviderRegistry) -> Self {
         Self {
             registry,
             providers,
-            attachments: None,
+            mcp_bootstrapper: None,
         }
     }
 
-    /// Attach an mcp-bridge attachment source (the `preview` wiring; see
-    /// [`crate::provider::AttachmentSource`]).
-    pub fn with_attachments(
+    /// Install an MCP bootstrapper (the `preview` wiring; see
+    /// [`crate::provider::McpBootstrapper`]).
+    pub fn with_mcp_bootstrapper(
         mut self,
-        attachments: Arc<dyn crate::provider::AttachmentSource>,
+        mcp_bootstrapper: Arc<dyn crate::provider::McpBootstrapper>,
     ) -> Self {
-        self.attachments = Some(attachments);
+        self.mcp_bootstrapper = Some(mcp_bootstrapper);
         self
     }
 
@@ -1026,12 +1028,12 @@ impl TurnActivities {
         let attempt = info.attempt;
         let prior = if attempt > 1 {
             ctx.heartbeat_details()
-                .deserialize::<TurnHeartbeat>()
+                .deserialize::<TurnSnapshot>()
                 .ok()
                 .flatten()
                 .unwrap_or_default()
         } else {
-            TurnHeartbeat::default()
+            TurnSnapshot::default()
         };
         let mut session = input.session;
         if attempt > 1
@@ -1041,22 +1043,23 @@ impl TurnActivities {
             session = SessionDirective::ResumeForked { session_id };
         }
 
-        let identity = TurnIdentity {
+        let turn_id = TurnId {
             run_id: info.workflow_run_id.clone().unwrap_or_default(),
             turn: input.turn,
             attempt,
         };
         let workflow_id = info.workflow_id.clone().unwrap_or_default();
         let mut request =
-            TurnRequest::new(identity.clone(), agent.directives(), input.input, session);
-        request.tooling = agent.tooling();
-        if let Some(source) = &self.attachments
-            && let Some(attachment) = source.attachment_for(&workflow_id, &identity, agent.name())
+            TurnRequest::new(turn_id.clone(), agent.directives(), input.input, session);
+        request.tool_config = agent.tool_config();
+        if let Some(bootstrapper) = &self.mcp_bootstrapper
+            && let Some(mcp_config) =
+                bootstrapper.bootstrap_mcp(&workflow_id, &turn_id, agent.name())
         {
-            request.tooling.mcp_servers.push(attachment.mcp_server);
-            request.tooling.mcp_timeout = attachment.mcp_timeout;
-            let allowed = request.tooling.allowed_native_tools.get_or_insert_default();
-            allowed.extend(attachment.allowed_tools);
+            request.tool_config.mcp_servers.push(mcp_config.mcp_server);
+            request.tool_config.mcp_timeout = mcp_config.mcp_timeout;
+            let allowed = request.tool_config.allowed_tools.get_or_insert_default();
+            allowed.extend(mcp_config.allowed_tools);
         }
 
         let span = telemetry::turn_span(
@@ -1116,14 +1119,14 @@ impl TurnActivities {
             .execute_turn(request, event_sink)
             .instrument(span.clone())
             .await;
-        let mut heartbeat = pump.await.unwrap_or_default();
-        heartbeat.usage = carry_usage_snapshot(
+        let mut snapshot = pump.await.unwrap_or_default();
+        snapshot.usage = carry_usage_snapshot(
             &prior_usage,
             &usage_snapshot.lock().expect("turn usage snapshot lock"),
         );
         // Flush the final snapshot before either success or failure returns.
         // On failure Temporal makes these details available to the retry.
-        let _ = ctx.record_heartbeat(heartbeat.clone()).await;
+        let _ = ctx.record_heartbeat(snapshot.clone()).await;
 
         match outcome {
             Ok(mut outcome) => {
@@ -1315,12 +1318,12 @@ mod tests {
         assert_eq!(usage.turns_with_unknown_tokens, 0);
         assert_eq!(usage.turns_with_unknown_cost, 0);
 
-        let heartbeat: TurnHeartbeat = serde_json::from_value(serde_json::json!({
+        let snapshot: TurnSnapshot = serde_json::from_value(serde_json::json!({
             "session_id": "session-old"
         }))
         .expect("old heartbeat shape");
-        assert_eq!(heartbeat.session_id.as_deref(), Some("session-old"));
-        assert!(heartbeat.usage.input_tokens.is_none());
+        assert_eq!(snapshot.session_id.as_deref(), Some("session-old"));
+        assert!(snapshot.usage.input_tokens.is_none());
 
         // A transcript record written before the usage extension and the
         // limit observation replays with the new fields absent.
@@ -1463,7 +1466,8 @@ mod tests {
                 })
             }
         }
-        let providers = Providers::new(Arc::new(Fake("claude"))).with(Arc::new(Fake("codex")));
+        let providers =
+            ProviderRegistry::new(Arc::new(Fake("claude"))).with(Arc::new(Fake("codex")));
         assert_eq!(providers.resolve(None).expect("default").name(), "claude");
         assert_eq!(
             providers.resolve(Some("codex")).expect("named").name(),
@@ -1473,12 +1477,12 @@ mod tests {
     }
 }
 
-/// The `tool_invoked` update's payload (mcp-bridge spec, update-payload
-/// contract table): identity plus the call itself.
+/// The `tool_invoked` update's payload: identity plus the call itself.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInvocation {
-    /// Turn/attempt/call-id identity the bridge stamped.
-    pub identity: InvocationId,
+pub struct ToolCallRequest {
+    /// Turn/attempt/call-id identity the MCP tool server stamped.
+    #[serde(rename = "identity")]
+    pub tool_call_id: ToolCallId,
     /// Tool name, as the model called it (unqualified).
     pub tool: String,
     /// The call's arguments, verbatim JSON.
@@ -1487,19 +1491,19 @@ pub struct ToolInvocation {
 
 /// The `tool_invoked` update's reply.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolInvocationReply {
-    /// The recorded result — fresh, joined, or replayed; the bridge cannot
+pub enum ToolCallReply {
+    /// The recorded result — fresh, joined, or replayed; the MCP tool server cannot
     /// tell and must not care.
     Completed(ToolCallResult),
-    /// The invocation was rejected before any work started.
-    Rejected(InvocationRejection),
+    /// The tool call was rejected before any work started.
+    Rejected(ToolCallRejection),
 }
 
-/// Why an invocation was rejected (mcp-bridge error table; the bridge maps
+/// Why a tool call was rejected (mcp-bridge error table; the MCP tool server maps
 /// each onto its MCP surface).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum InvocationRejection {
-    /// Superseded attempt, unrecorded call (Requirement 4.2).
+pub enum ToolCallRejection {
+    /// Superseded attempt, unrecorded call.
     Fenced,
     /// Tool not in the turn's tool set.
     UnknownTool,
@@ -1520,13 +1524,13 @@ pub struct ExecuteToolInput {
     pub tool: String,
     /// Arguments, verbatim.
     pub arguments: serde_json::Value,
-    /// The invocation identity, supplied to the handler in [`ToolContext`]
+    /// The tool call identity, supplied to the handler in [`ToolContext`]
     /// as its idempotency key.
-    pub identity: InvocationId,
+    #[serde(rename = "identity")]
+    pub tool_call_id: ToolCallId,
 }
 
-/// The activity collection executing framework tools durably (mcp-bridge
-/// spec, Requirement 2).
+/// The activity collection executing framework tools durably.
 #[derive(Debug)]
 pub struct ToolActivities {
     registry: Arc<AgentRegistry>,
@@ -1550,7 +1554,7 @@ impl ToolActivities {
     }
 
     /// Override the per-result size ceiling. The engine bootstrap supplies
-    /// this from `BridgeConfig::max_result_bytes`.
+    /// this from `McpToolServerConfig::max_result_bytes`.
     pub fn with_max_result_bytes(mut self, max_result_bytes: usize) -> Self {
         self.max_result_bytes = max_result_bytes;
         self
@@ -1571,9 +1575,9 @@ impl ToolActivities {
             info.workflow_id.as_deref().unwrap_or_default(),
             &input.agent,
             &input.tool,
-            &input.identity.call_id,
-            input.identity.turn,
-            input.identity.attempt,
+            &input.tool_call_id.call_id,
+            input.tool_call_id.turn,
+            input.tool_call_id.attempt,
         );
         let agent = match self.registry.get(&input.agent) {
             Ok(agent) => agent,
@@ -1593,9 +1597,9 @@ impl ToolActivities {
         };
         let context = ToolContext {
             run_id: info.workflow_run_id.clone().unwrap_or_default(),
-            turn: input.identity.turn,
-            attempt: input.identity.attempt,
-            invocation_id: input.identity.call_id.clone(),
+            turn: input.tool_call_id.turn,
+            attempt: input.tool_call_id.attempt,
+            invocation_id: input.tool_call_id.call_id.clone(),
         };
         match tool
             .invoke(context, input.arguments)

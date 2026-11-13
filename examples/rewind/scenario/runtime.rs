@@ -7,11 +7,11 @@ use std::{
 
 use anyhow::Result;
 use odori::{
-    Agent, AgentRegistry, EmbeddedEngineConfig, EmbeddedStorageConfig, Providers, TokeiraConfig,
-    Tool,
+    Agent, AgentRegistry, EmbeddedEngineConfig, EmbeddedStorageConfig, ProviderRegistry,
+    TokeiraConfig, Tool,
 };
 use odori_engine::{ConnectTarget, Engine, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 use serde_json::{Value, json};
 
 use super::{provider::RewindProvider, state::RewindState};
@@ -84,8 +84,8 @@ pub(super) async fn start_runtime(
     OdoriRuntime::builder("example-rewind")
         .connect(ConnectTarget::service_override(embedded.service_override()))
         .agents(agents(state.clone()))
-        .providers(Providers::new(Arc::new(RewindProvider { state })))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(Arc::new(RewindProvider { state })))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await
 }

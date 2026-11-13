@@ -1,5 +1,4 @@
-//! Property suites for the call broker (mcp-bridge spec, Properties 2 and
-//! 5), against a fake update client with controllable completion ordering,
+//! Property suites for the call broker, against a fake update client with controllable completion ordering,
 //! under tokio's paused virtual clock.
 #![cfg(feature = "preview")]
 
@@ -13,40 +12,40 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::{
-    InvocationId, ToolCallResult,
-    run::{ToolInvocation, ToolInvocationReply},
+    ToolCallId, ToolCallResult,
+    run::{ToolCallReply, ToolCallRequest},
 };
-use odori_mcp_bridge::{BridgeError, CallBroker, UpdateClient};
+use odori_mcp_bridge::{CallBroker, McpToolServerError, ToolCallDispatcher};
 use proptest::prelude::*;
 
 /// Completes after a controlled virtual delay, flagging the completion so
 /// the ordering between "update completed" and "reply observable" is
 /// checkable.
 #[derive(Debug)]
-struct FakeUpdateClient {
+struct FakeToolCallDispatcher {
     delay: Duration,
     completed: Arc<AtomicBool>,
     reply_text: String,
 }
 
 #[async_trait]
-impl UpdateClient for FakeUpdateClient {
-    async fn tool_invoked(
+impl ToolCallDispatcher for FakeToolCallDispatcher {
+    async fn dispatch(
         &self,
         _workflow_id: &str,
-        _invocation: ToolInvocation,
-    ) -> Result<ToolInvocationReply, BridgeError> {
+        _invocation: ToolCallRequest,
+    ) -> Result<ToolCallReply, McpToolServerError> {
         tokio::time::sleep(self.delay).await;
         self.completed.store(true, Ordering::SeqCst);
-        Ok(ToolInvocationReply::Completed(ToolCallResult::text(
+        Ok(ToolCallReply::Completed(ToolCallResult::text(
             self.reply_text.clone(),
         )))
     }
 }
 
-fn invocation() -> ToolInvocation {
-    ToolInvocation {
-        identity: InvocationId {
+fn tool_call() -> ToolCallRequest {
+    ToolCallRequest {
+        tool_call_id: ToolCallId {
             turn: 0,
             attempt: 1,
             call_id: "call-p".to_owned(),
@@ -67,7 +66,7 @@ fn paused_runtime() -> tokio::runtime::Runtime {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
-    // Feature: mcp-bridge, Property 2: record before respond
+    // record before respond
     //
     // For any completion timing, the broker's reply is observable only
     // after the update client's completion has happened, and it is exactly
@@ -77,14 +76,14 @@ proptest! {
         let runtime = paused_runtime();
         runtime.block_on(async move {
             let completed = Arc::new(AtomicBool::new(false));
-            let client = Arc::new(FakeUpdateClient {
+            let client = Arc::new(FakeToolCallDispatcher {
                 delay: Duration::from_millis(delay_ms),
                 completed: completed.clone(),
                 reply_text: format!("reply-{delay_ms}"),
             });
             let broker = CallBroker::new(client, Duration::from_millis(cadence_ms));
             let reply = broker
-                .call("wf", invocation(), || {
+                .call("wf", tool_call(), || {
                     // Progress must never fire after completion-and-return;
                     // nothing to assert here beyond not observing a reply.
                 })
@@ -95,7 +94,7 @@ proptest! {
                 "reply observable before the update completed"
             );
             match reply {
-                ToolInvocationReply::Completed(result) => {
+                ToolCallReply::Completed(result) => {
                     assert_eq!(result, ToolCallResult::text(format!("reply-{delay_ms}")));
                 }
                 other => panic!("unexpected reply: {other:?}"),
@@ -103,10 +102,10 @@ proptest! {
         });
     }
 
-    // Feature: mcp-bridge, Property 5: keepalive cadence bound
+    // keepalive cadence bound
     //
     // For any (update duration T, cadence k, harness timeout H) with
-    // k < H, the gap between consecutive bridge emissions observable by
+    // k < H, the gap between consecutive MCP tool server emissions observable by
     // the harness (progress ticks and the final reply) never reaches H.
     #[test]
     fn p5_keepalive_cadence_bound(
@@ -119,7 +118,7 @@ proptest! {
         runtime.block_on(async move {
             let observations: Arc<std::sync::Mutex<Vec<tokio::time::Instant>>> =
                 Arc::new(std::sync::Mutex::new(vec![tokio::time::Instant::now()]));
-            let client = Arc::new(FakeUpdateClient {
+            let client = Arc::new(FakeToolCallDispatcher {
                 delay: Duration::from_millis(duration_ms),
                 completed: Arc::new(AtomicBool::new(false)),
                 reply_text: "done".to_owned(),
@@ -127,7 +126,7 @@ proptest! {
             let broker = CallBroker::new(client, Duration::from_millis(cadence_ms));
             let progress_log = observations.clone();
             broker
-                .call("wf", invocation(), move || {
+                .call("wf", tool_call(), move || {
                     progress_log
                         .lock()
                         .expect("observation lock")

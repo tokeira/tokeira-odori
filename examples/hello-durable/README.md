@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use odori::{
-    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, Providers,
+    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, ProviderRegistry,
     providers::CodexProvider,
 };
 
@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     // Register an agent against the authenticated Codex subscription provider.
     let mut agents = AgentRegistry::new();
     agents.register(Agent::new("hello", "Answer clearly.").with_provider("codex"));
-    let providers = Providers::new(Arc::new(CodexProvider::new()));
+    let providers = ProviderRegistry::new(Arc::new(CodexProvider::new()));
 
     let runtime = OdoriRuntime::builder("hello-durable")
         .connect(ConnectTarget::service_override(engine.service_override()))

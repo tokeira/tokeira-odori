@@ -18,10 +18,10 @@ use std::{
 };
 
 use anyhow::Result;
-use odori_agents::{Agent, AgentRegistry, Providers, RunConfig, Tool};
+use odori_agents::{Agent, AgentRegistry, ProviderRegistry, RunConfig, Tool};
 use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 use odori_providers::ClaudeProvider;
 use serde_json::json;
 
@@ -38,7 +38,7 @@ async fn live_claude_turn_through_the_embedded_engine() -> Result<()> {
     let runtime = OdoriRuntime::builder("tq-live-claude")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider.clone()))
+        .providers(ProviderRegistry::new(provider.clone()))
         .start()
         .await?;
 
@@ -67,7 +67,7 @@ async fn live_claude_turn_through_the_embedded_engine() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "burns subscription quota; needs an authenticated claude CLI"]
-async fn live_bridged_tool_call_executes_durably() -> Result<()> {
+async fn live_mcp_tool_call_executes_durably() -> Result<()> {
     let executions = Arc::new(AtomicU32::new(0));
     let counter = executions.clone();
     let mut registry = AgentRegistry::new();
@@ -92,7 +92,7 @@ async fn live_bridged_tool_call_executes_durably() -> Result<()> {
                         .and_then(|value| value.as_str())
                         .unwrap_or("<none>");
                     Ok(json!(format!(
-                        "receipt: recorded {fact:?} (invocation {})",
+                        "receipt: recorded {fact:?} (tool_call {})",
                         context.invocation_id
                     )))
                 }
@@ -104,8 +104,8 @@ async fn live_bridged_tool_call_executes_durably() -> Result<()> {
     let runtime = OdoriRuntime::builder("tq-live-bridge")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(provider))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await?;
 
@@ -120,7 +120,7 @@ async fn live_bridged_tool_call_executes_durably() -> Result<()> {
         )
         .await?;
 
-    // The tool executed durably (as an activity, through the bridge), and
+    // The tool executed durably (as an activity, through the MCP tool server), and
     // its receipt round-tripped through the harness into the run's answer.
     assert_eq!(
         executions.load(Ordering::SeqCst),

@@ -1,11 +1,11 @@
 //! Shared support for Odori's runnable examples and the integration tests:
-//! the `--storage` flag and the bridge endpoint a scripted provider reads out
-//! of a turn's tooling. The scenarios themselves live in `odori-examples`.
+//! the `--storage` flag and the MCP tool server endpoint a scripted provider reads out
+//! of a turn's tool configuration. The scenarios themselves live in `odori-examples`.
 
 use std::{collections::BTreeMap, error::Error, fmt, path::PathBuf};
 
 use clap::{Args, ValueEnum};
-use odori_agents::provider::{McpTransport, TurnError, TurnTooling};
+use odori_agents::provider::{McpTransport, ToolConfig, TurnError};
 use odori_engine::{
     DsqlMigrationPolicy, EmbeddedDsqlLimits, EmbeddedStorageConfig, ExistingEmbeddedDsqlConfig,
     ManagedClusterIntent, ManagedEmbeddedDsqlConfig,
@@ -36,26 +36,26 @@ pub struct StorageArgs {
 
 /// A factual `--storage` environment error for an example.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageArgumentError(String);
+pub struct StorageConfigError(String);
 
-impl fmt::Display for StorageArgumentError {
+impl fmt::Display for StorageConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl Error for StorageArgumentError {}
+impl Error for StorageConfigError {}
 
-fn required_environment(name: &str) -> Result<String, StorageArgumentError> {
+fn required_environment(name: &str) -> Result<String, StorageConfigError> {
     std::env::var(name).map_err(|_| {
-        StorageArgumentError(format!(
+        StorageConfigError(format!(
             "{name} must be set for the selected DSQL storage mode"
         ))
     })
 }
 
 impl StorageArgs {
-    /// Resolve the selected mode into E1's storage configuration, reading the
+    /// Resolve the selected mode into the embedded engine's storage configuration, reading the
     /// environment the DSQL modes require.
     ///
     /// `managed-dsql` reads `ODORI_DSQL_REGION` and
@@ -63,7 +63,7 @@ impl StorageArgs {
     /// reads `ODORI_DSQL_CLUSTER_ID`, `ODORI_DSQL_CLUSTER_ARN`,
     /// `ODORI_DSQL_ENDPOINT`, and an explicit `ODORI_DSQL_MIGRATION_POLICY`
     /// (`automatic` or `validate-only`).
-    pub fn resolve(self) -> Result<EmbeddedStorageConfig, StorageArgumentError> {
+    pub fn resolve(self) -> Result<EmbeddedStorageConfig, StorageConfigError> {
         match self.storage {
             StorageMode::InMemory => Ok(EmbeddedStorageConfig::InMemory),
             StorageMode::ManagedDsql => Ok(EmbeddedStorageConfig::ManagedDsql(
@@ -87,7 +87,7 @@ impl StorageArgs {
                         "automatic" => DsqlMigrationPolicy::Automatic,
                         "validate-only" => DsqlMigrationPolicy::ValidateOnly,
                         _ => {
-                            return Err(StorageArgumentError(
+                            return Err(StorageConfigError(
                                 "ODORI_DSQL_MIGRATION_POLICY must be automatic or validate-only"
                                     .to_owned(),
                             ));
@@ -108,26 +108,26 @@ impl StorageArgs {
     }
 }
 
-/// The bridge's URL and bearer token, as attached to a turn's tooling.
+/// The MCP tool server's URL and bearer token, as attached to a turn's tool configuration.
 ///
 /// Called from inside a turn, so a missing or non-HTTP attachment is a
 /// `TurnError::Tooling` rather than a panic.
-pub fn endpoint(tooling: &TurnTooling) -> Result<(String, String), TurnError> {
+pub fn endpoint(tool_config: &ToolConfig) -> Result<(String, String), TurnError> {
     let fault = |message: &str| TurnError::Tooling {
         message: message.to_owned(),
     };
-    let server = tooling
+    let server = tool_config
         .mcp_servers
         .first()
-        .ok_or_else(|| fault("the durable bridge was not attached"))?;
+        .ok_or_else(|| fault("the MCP tool server was not attached"))?;
     let McpTransport::Http { url, headers } = &server.transport else {
-        return Err(fault("the durable bridge must be attached over HTTP"));
+        return Err(fault("the MCP tool server must be attached over HTTP"));
     };
     let authorization = headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
         .map(|(_, value)| value.clone())
-        .ok_or_else(|| fault("bridge attachment omitted authorization"))?;
+        .ok_or_else(|| fault("MCP configuration omitted authorization"))?;
     Ok((url.clone(), authorization))
 }
 

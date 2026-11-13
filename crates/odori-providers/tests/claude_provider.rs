@@ -2,14 +2,14 @@
 //! test double (`odori-fake-claude`), covering supervision, argument
 //! rendering, structured output, the exit-classification taxonomy —
 //! including died-awaiting-MCP — and a real bridged `tools/call` through
-//! the bridge's loopback server, all without a subscription. Fake modes
+//! the MCP tool server's loopback server, all without a subscription. Fake modes
 //! are selected per provider instance via `ClaudeConfig::with_env`, so
 //! tests stay process-state-free.
 
 use std::{sync::Arc, time::Duration};
 
 use odori_agents::provider::{
-    AgentDirectives, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnIdentity,
+    AgentDirectives, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnId,
     TurnRequest,
 };
 use odori_providers::{ClaudeConfig, ClaudeProvider, PINNED_VERSION};
@@ -26,7 +26,7 @@ fn provider_with(env: &[(&str, &str)]) -> ClaudeProvider {
 
 fn request(input: &str, session: SessionDirective) -> TurnRequest {
     let mut request = TurnRequest::new(
-        TurnIdentity {
+        TurnId {
             run_id: "run-test".to_owned(),
             turn: 0,
             attempt: 1,
@@ -177,7 +177,7 @@ async fn model_and_schema_directives_reach_the_harness() {
     // the prose `result` the scripted turn ends on.
     let value: Value =
         serde_json::from_str(&outcome.text).expect("the structured output is the turn text");
-    let echo = value["echo"].as_str().expect("echoed invocation");
+    let echo = value["echo"].as_str().expect("echoed tool_call");
     assert!(
         echo.contains("model=opus") && echo.contains("schema"),
         "{echo}"
@@ -265,7 +265,7 @@ async fn classification_maps_the_taxonomy() {
 }
 
 #[tokio::test]
-async fn death_with_pending_bridge_calls_is_its_own_class() {
+async fn death_with_pending_mcp_calls_is_its_own_class() {
     let provider = provider_with(&[
         ("FAKE_CLAUDE_MODE", "die"),
         ("FAKE_CLAUDE_PENDING_TOOL", "mcp__odori__deploy"),
@@ -344,38 +344,38 @@ async fn missing_binary_says_how_to_install() {
 
 mod bridged {
     //! A real `tools/call` from the scripted harness through the real
-    //! bridge server — the provider-side half of the live E2E, quota-free.
+    //! MCP tool server server — the provider-side half of the live E2E, quota-free.
 
     use super::*;
     use async_trait::async_trait;
     use odori_agents::{
         Agent, AgentRegistry, Tool, ToolCallResult,
-        provider::AttachmentSource,
-        run::{ToolInvocation, ToolInvocationReply},
+        provider::McpBootstrapper,
+        run::{ToolCallReply, ToolCallRequest},
     };
-    use odori_mcp_bridge::{Bridge, BridgeConfig, BridgeError, UpdateClient};
+    use odori_mcp_bridge::{
+        McpToolServer, McpToolServerConfig, McpToolServerError, ToolCallDispatcher,
+    };
 
     #[derive(Debug)]
-    struct RecordingUpdateClient;
+    struct RecordingToolCallDispatcher;
 
     #[async_trait]
-    impl UpdateClient for RecordingUpdateClient {
-        async fn tool_invoked(
+    impl ToolCallDispatcher for RecordingToolCallDispatcher {
+        async fn dispatch(
             &self,
             _workflow_id: &str,
-            invocation: ToolInvocation,
-        ) -> Result<ToolInvocationReply, BridgeError> {
-            Ok(ToolInvocationReply::Completed(ToolCallResult::text(
-                format!(
-                    "bridged:{}:{}",
-                    invocation.tool, invocation.identity.call_id
-                ),
-            )))
+            tool_call: ToolCallRequest,
+        ) -> Result<ToolCallReply, McpToolServerError> {
+            Ok(ToolCallReply::Completed(ToolCallResult::text(format!(
+                "bridged:{}:{}",
+                tool_call.tool, tool_call.tool_call_id.call_id
+            ))))
         }
     }
 
     #[tokio::test]
-    async fn scripted_harness_completes_a_bridged_tool_call() {
+    async fn scripted_harness_completes_an_mcp_tool_call() {
         let mut registry = AgentRegistry::new();
         registry.register(Agent::new("ops", "operate").with_tool(Tool::new(
             "deploy",
@@ -383,31 +383,31 @@ mod bridged {
             json!({"type": "object"}),
             |_context, _args| async { Ok(json!("unused: the update client answers")) },
         )));
-        let bridge = Bridge::start(
+        let mcp_server = McpToolServer::start(
             Arc::new(registry),
-            Arc::new(RecordingUpdateClient),
-            BridgeConfig::default(),
+            Arc::new(RecordingToolCallDispatcher),
+            McpToolServerConfig::default(),
         )
         .await
-        .expect("bridge start");
-        let attachment = bridge
-            .attachment_for(
+        .expect("start MCP tool server");
+        let mcp_config = mcp_server
+            .bootstrap_mcp(
                 "wf-o3",
-                &TurnIdentity {
+                &TurnId {
                     run_id: "r".into(),
                     turn: 0,
                     attempt: 1,
                 },
                 "ops",
             )
-            .expect("attachment");
+            .expect("mcp_config");
 
         let provider = provider_with(&[("FAKE_CLAUDE_MODE", "mcp")]);
         let (events, receiver) = sink();
         let mut req = request("use the tool", SessionDirective::Start);
-        req.tooling.mcp_servers.push(attachment.mcp_server);
-        req.tooling.mcp_timeout = attachment.mcp_timeout;
-        req.tooling.allowed_native_tools = Some(attachment.allowed_tools);
+        req.tool_config.mcp_servers.push(mcp_config.mcp_server);
+        req.tool_config.mcp_timeout = mcp_config.mcp_timeout;
+        req.tool_config.allowed_tools = Some(mcp_config.allowed_tools);
 
         let outcome = provider
             .execute_turn(req, events)
@@ -415,7 +415,7 @@ mod bridged {
             .expect("bridged turn");
         assert!(
             outcome.text.contains("bridged:deploy:tu-fake-1"),
-            "the bridge's reply must round-trip into the turn result: {}",
+            "the mcp_server's reply must round-trip into the turn result: {}",
             outcome.text
         );
         let events = drain(receiver);

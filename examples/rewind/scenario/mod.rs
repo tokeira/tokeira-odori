@@ -1,6 +1,6 @@
 //! The rewind scenario lifecycle and observable report.
 
-mod bridge;
+mod mcp_client;
 mod model;
 mod observation;
 mod provider;
@@ -35,14 +35,14 @@ pub struct RewindReport {
 
 /// Kill the first harness attempt after a durable tool result, stop its
 /// worker, start a replacement over the same engine, and restore the result
-/// from the invocation registry. Then use the successful deliberation as one
+/// from the tool-call tracker. Then use the successful deliberation as one
 /// immutable snapshot for two new workflows with deliberately different
 /// decisions.
 pub async fn run_rewind(print: bool) -> Result<RewindReport> {
     run_rewind_with_storage(print, EmbeddedStorageConfig::InMemory).await
 }
 
-/// Run rewind against an explicit E1 storage mode. Durable DSQL modes stop
+/// Run rewind against an explicit embedded-engine storage mode. Durable DSQL modes stop
 /// and replace the engine as well as the worker before the retry completes.
 pub async fn run_rewind_with_storage(
     print: bool,

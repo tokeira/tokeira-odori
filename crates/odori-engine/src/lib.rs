@@ -21,11 +21,11 @@
 //! ```rust,ignore
 //! let engine = Engine::start_with_embedded_config(EmbeddedEngineConfig::default()).await?;
 //! let odori = OdoriRuntime::builder("my-app")
-//!     .connect(ConnectTarget::service_override(engine.service_override()))
-//!     .agents(registry)
-//!     .providers(providers)
-//!     .start()
-//!     .await?;
+//! .connect(ConnectTarget::service_override(engine.service_override()))
+//! .agents(registry)
+//! .providers(providers)
+//! .start()
+//! .await?;
 //! let result: String = odori.runner().run("assistant", "hello", "run-1").await?;
 //! ```
 
@@ -37,7 +37,7 @@ use std::{
 
 use anyhow::Context as _;
 use odori_agents::{
-    AgentRegistry, Providers, Runner, TurnActivities, register_odori, run::ToolActivities,
+    AgentRegistry, ProviderRegistry, Runner, TurnActivities, register_odori, run::ToolActivities,
 };
 use temporalio_client::{
     Client, ClientOptions, Connection, ConnectionOptions, Url,
@@ -58,8 +58,8 @@ pub use tokeira_engine::{
 
 /// Odori's owner for an embedded Tokeira engine.
 ///
-/// The wrapper deliberately accepts E1's configuration types and returns E1's
-/// typed startup and shutdown failures unchanged. In particular, a rejected
+/// The wrapper accepts the embedded engine's configuration types and returns
+/// its typed startup and shutdown failures unchanged. In particular, a rejected
 /// DSQL configuration cannot turn into an in-memory engine here.
 #[derive(Debug)]
 pub struct Engine {
@@ -99,7 +99,7 @@ impl Engine {
         self.inner.service_override()
     }
 
-    /// Gracefully stop the engine, forwarding E1's typed cleanup result.
+    /// Gracefully stop the engine, forwarding the embedded engine's typed cleanup result.
     pub async fn shutdown(self) -> Result<(), EmbeddedEngineShutdownError> {
         self.inner.shutdown().await
     }
@@ -140,9 +140,9 @@ pub struct OdoriRuntimeBuilder {
     namespace: String,
     target: Option<ConnectTarget>,
     registry: AgentRegistry,
-    providers: Option<Providers>,
+    providers: Option<ProviderRegistry>,
     #[cfg(feature = "preview")]
-    bridge: Option<odori_mcp_bridge::BridgeConfig>,
+    mcp_server: Option<odori_mcp_bridge::McpToolServerConfig>,
 }
 
 impl OdoriRuntimeBuilder {
@@ -153,7 +153,7 @@ impl OdoriRuntimeBuilder {
     }
 
     /// The provider set turns execute through.
-    pub fn providers(mut self, providers: Providers) -> Self {
+    pub fn providers(mut self, providers: ProviderRegistry) -> Self {
         self.providers = Some(providers);
         self
     }
@@ -173,8 +173,8 @@ impl OdoriRuntimeBuilder {
     /// Enable the mcp-bridge for this runtime: framework tools execute as
     /// durable activities reachable mid-turn.
     #[cfg(feature = "preview")]
-    pub fn bridge(mut self, config: odori_mcp_bridge::BridgeConfig) -> Self {
-        self.bridge = Some(config);
+    pub fn mcp_server(mut self, config: odori_mcp_bridge::McpToolServerConfig) -> Self {
+        self.mcp_server = Some(config);
         self
     }
 
@@ -209,18 +209,20 @@ impl OdoriRuntimeBuilder {
         #[allow(unused_mut)]
         let mut tool_activities = ToolActivities::new(registry.clone());
         #[cfg(feature = "preview")]
-        let bridge = match self.bridge {
+        let mcp_server = match self.mcp_server {
             Some(config) => {
                 tool_activities = tool_activities.with_max_result_bytes(config.max_result_bytes);
-                let bridge = odori_mcp_bridge::Bridge::start(
+                let mcp_server = odori_mcp_bridge::McpToolServer::start(
                     registry.clone(),
-                    Arc::new(odori_mcp_bridge::WorkflowUpdateClient::new(client.clone())),
+                    Arc::new(odori_mcp_bridge::WorkflowToolCallDispatcher::new(
+                        client.clone(),
+                    )),
                     config,
                 )
                 .await
-                .context("start the mcp-bridge server")?;
-                activities = activities.with_attachments(Arc::new(bridge.clone()));
-                Some(bridge)
+                .context("start the mcp_server")?;
+                activities = activities.with_mcp_bootstrapper(Arc::new(mcp_server.clone()));
+                Some(mcp_server)
             }
             None => None,
         };
@@ -271,7 +273,7 @@ impl OdoriRuntimeBuilder {
             shutdown: Some(shutdown),
             worker_thread: Some(worker_thread),
             #[cfg(feature = "preview")]
-            bridge,
+            mcp_server,
         })
     }
 }
@@ -283,7 +285,7 @@ pub struct OdoriRuntime {
     shutdown: Option<Box<dyn Fn() + Send + Sync>>,
     worker_thread: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     #[cfg(feature = "preview")]
-    bridge: Option<odori_mcp_bridge::Bridge>,
+    mcp_server: Option<odori_mcp_bridge::McpToolServer>,
 }
 
 impl fmt::Debug for OdoriRuntime {
@@ -304,7 +306,7 @@ impl OdoriRuntime {
             registry: AgentRegistry::new(),
             providers: None,
             #[cfg(feature = "preview")]
-            bridge: None,
+            mcp_server: None,
         }
     }
 
@@ -318,10 +320,10 @@ impl OdoriRuntime {
         self.client.clone()
     }
 
-    /// The bridge endpoint URL, when the bridge is enabled.
+    /// The MCP tool server endpoint URL, when the MCP tool server is enabled.
     #[cfg(feature = "preview")]
-    pub fn bridge_url(&self) -> Option<&str> {
-        self.bridge.as_ref().map(|bridge| bridge.url())
+    pub fn mcp_server_url(&self) -> Option<&str> {
+        self.mcp_server.as_ref().map(|mcp_server| mcp_server.url())
     }
 
     /// Stop the worker and await its drain.

@@ -10,13 +10,13 @@
 #![allow(clippy::print_stdout)]
 
 use odori_agents::provider::{
-    AgentDirectives, Provider, SessionDirective, TurnEventSink, TurnIdentity, TurnRequest,
+    AgentDirectives, Provider, SessionDirective, TurnEventSink, TurnId, TurnRequest,
 };
 use tokio::sync::mpsc;
 
 fn request(input: &str) -> TurnRequest {
     TurnRequest::new(
-        TurnIdentity {
+        TurnId {
             run_id: "run-api-live".to_owned(),
             turn: 0,
             attempt: 1,

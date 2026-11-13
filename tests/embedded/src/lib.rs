@@ -4,7 +4,7 @@
 use std::{net::TcpListener, sync::Arc};
 
 use anyhow::Result;
-use odori_agents::{AgentRegistry, Providers, provider::Provider};
+use odori_agents::{AgentRegistry, ProviderRegistry, provider::Provider};
 use odori_engine::{
     ConnectTarget, EmbeddedEngineConfig, EmbeddedStorageConfig, Engine, OdoriRuntime, TokeiraConfig,
 };
@@ -36,7 +36,7 @@ pub async fn start_runtime(
     OdoriRuntime::builder(task_queue)
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider))
+        .providers(ProviderRegistry::new(provider))
         .start()
         .await
 }

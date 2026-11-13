@@ -1,7 +1,7 @@
 //! The slice-fleet scenario lifecycle and observable report.
 
 mod agents;
-mod bridge;
+mod mcp_client;
 mod model;
 mod provider;
 mod runtime;
@@ -16,9 +16,9 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, ensure};
-use odori::{Providers, RunEnd, RunOutput};
+use odori::{ProviderRegistry, RunEndReason, RunOutput};
 use odori_engine::{ConnectTarget, EmbeddedStorageConfig, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 
 use agents::registry;
 use model::{PLAN_HASH, SlicePlan};
@@ -41,13 +41,13 @@ pub struct FleetReport {
 }
 
 /// Run the complete fleet with a scripted harness over the real embedded
-/// engine and HTTP bridge. Every signal, child workflow, update, and tool
+/// engine and HTTP MCP tool server. Every signal, child workflow, update, and tool
 /// result is real; only model choice is scripted for determinism.
 pub async fn run_scripted_fleet(print: bool) -> Result<FleetReport> {
     run_scripted_fleet_with_storage(print, EmbeddedStorageConfig::InMemory).await
 }
 
-/// Run the fleet against an explicit E1 embedded storage mode.
+/// Run the fleet against an explicit embedded-engine embedded storage mode.
 pub async fn run_scripted_fleet_with_storage(
     print: bool,
     storage: EmbeddedStorageConfig,
@@ -77,8 +77,8 @@ pub async fn run_scripted_fleet_with_storage(
     let runtime = OdoriRuntime::builder("example-slice-fleet")
         .connect(ConnectTarget::service_override(embedded.service_override()))
         .agents(registry(state.clone()))
-        .providers(Providers::new(codex).with(claude))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(codex).with(claude))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await?;
 
@@ -204,7 +204,7 @@ pub async fn run_scripted_fleet_with_storage(
 }
 
 pub fn verify_fleet(report: &FleetReport) -> Result<()> {
-    ensure!(matches!(report.output.end, RunEnd::ConversationEnded));
+    ensure!(matches!(report.output.end, RunEndReason::ConversationEnded));
     // Six direct approval/orchestration turns plus five delegated worker,
     // reviewer, and Raise turns: child spend is parent spend.
     ensure!(report.output.turns == 11);

@@ -7,7 +7,7 @@ Use these guides after the root [quickstart](../README.md#quickstart).
   `Handoff`, `Guardrail`, and typed outputs.
 - [Providers](providers.md) covers subscription and API backends, setup,
   session continuity, and errors.
-- [Durable tools](durable-tools.md) explains the `preview` MCP bridge and
+- [Durable tools](durable-tools.md) explains the `preview` MCP tool server and
   tool replay.
 - [Budgets and handoffs](budgets-and-handoffs.md) explains deterministic
   spend enforcement and child workflows.

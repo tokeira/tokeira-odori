@@ -7,7 +7,7 @@ resumes the session recovered from heartbeat details. Later conversation turns
 fork from the prior recorded session so a failed attempt cannot contaminate the
 accepted lineage.
 
-A `Providers` value has one default provider and any number of named
+A `ProviderRegistry` value has one default provider and any number of named
 additional providers. `Agent::with_provider` selects by
 `Provider::name()`; an unbound agent uses the default.
 
@@ -87,10 +87,10 @@ Codex credential store. Rate limits, usage limits, quota, server overload, and
 stream failures are retryable provider API failures. Bad requests, policy or
 context-window failures, and protocol drift are configuration failures.
 Missing resumed threads are non-retryable. Sandboxing and MCP failures retain
-their separate tooling classification.
+their separate `TurnError::Tooling` classification.
 
 Codex's MCP tool timeout at this pin is a fixed wall-clock ceiling; progress
-notifications do not extend it. The bridge pins a timeout above its keepalive
+notifications do not extend it. The MCP tool server pins a timeout above its keepalive
 cadence, but a real tool must still complete within that ceiling.
 
 Provider name: `codex`.
@@ -108,7 +108,7 @@ odori = { version = "0.1.0", features = ["api-anthropic"] }
 `AnthropicProvider` streams Messages API responses and runs its internal
 model/tool loop to quiescence within one turn. It retries transient HTTP
 failures at most four times, honors `retry-after` up to 30 seconds, reports
-token usage, and calls framework tools only through the `preview` MCP bridge.
+token usage, and calls framework tools only through the `preview` MCP tool server.
 
 Multi-turn here is continuity-within-process: the provider stores message
 history in memory. A new worker process cannot resume that Anthropic API
@@ -154,7 +154,7 @@ server errors retry with bounded backoff and then surface as retryable
 
 ## Reasoning effort
 
-`Agent::with_effort(Effort)` sets a provider-neutral deliberation level:
+`Agent::with_effort(ReasoningEffort)` sets a provider-neutral deliberation level:
 `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — the
 union of the vendor surfaces Odori drives. Unset means the backend's own
 default; `none` is the explicit request for no deliberation, where the
@@ -194,7 +194,7 @@ remedy. Operators who want an exact number instead of the ladder's
 points set `AnthropicConfig::with_thinking_budget(n)` — the
 provider-level default for turns whose agent sets no effort, validated
 on use against the API's 1024-token floor and the `max_tokens` ceiling.
-An agent-level effort always overrides it, `Effort::None` included.
+An agent-level effort always overrides it, `ReasoningEffort::None` included.
 With thinking enabled, streamed thinking blocks are assembled verbatim —
 text and signature — so the internal tool loop's assistant echo
 satisfies the API's thinking contract.
@@ -211,7 +211,7 @@ Providers map failures to one public taxonomy:
 | `HarnessDiedAwaitingTools` | yes | The CLI died with durable MCP calls still pending |
 | `Config` | no | Missing binary, authentication, invalid flags, protocol drift, or rejected request |
 | `Timeout` | yes | The provider-side turn deadline elapsed |
-| `Tooling` | yes | The MCP attachment or tool transport failed mid-turn |
+| `Tooling` | yes | The MCP configuration or tool transport failed mid-turn |
 
 The turn activity applies its configured retry policy to retryable classes.
 None of these classes turns a quota error or dead harness into an unbounded

@@ -1,10 +1,9 @@
-//! Property suites for the invocation registry (mcp-bridge spec,
-//! Properties 1, 3, 4), run against a reference model over generated
+//! Property suites for the tool-call tracker , run against a reference model over generated
 //! presentation/completion interleavings.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use odori_agents::invocation::{Admission, InvocationId, InvocationRegistry, ToolCallResult};
+use odori_agents::tool_call::{ToolCallAdmission, ToolCallId, ToolCallResult, ToolCallTracker};
 use proptest::prelude::*;
 
 /// One step of a generated run: a presentation, or completing the oldest
@@ -36,8 +35,8 @@ fn canonical_result(turn: u32, call: u8) -> ToolCallResult {
     ToolCallResult::text(format!("result-{turn}-{call}"))
 }
 
-fn present(registry: &mut InvocationRegistry, turn: u32, attempt: u32, call: u8) -> Admission {
-    let id = InvocationId {
+fn present(registry: &mut ToolCallTracker, turn: u32, attempt: u32, call: u8) -> ToolCallAdmission {
+    let id = ToolCallId {
         turn,
         attempt,
         call_id: format!("call-{call}"),
@@ -48,7 +47,7 @@ fn present(registry: &mut InvocationRegistry, turn: u32, attempt: u32, call: u8)
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
-    // Feature: mcp-bridge, Property 1: at-most-once execution per identity
+    // at-most-once execution per identity
     //
     // For any presentation sequence — retries, later attempts, interleaved
     // completions — at most one Execute is admitted per (turn, call id),
@@ -56,30 +55,30 @@ proptest! {
     // byte-identically.
     #[test]
     fn p1_at_most_once_execution_per_identity(ops in ops()) {
-        let mut registry = InvocationRegistry::new();
+        let mut registry = ToolCallTracker::new();
         let mut executed: HashSet<(u32, u8)> = HashSet::new();
-        let mut outstanding: VecDeque<((u32, u8), odori_agents::invocation::ExecutionTicket)> =
+        let mut outstanding: VecDeque<((u32, u8), odori_agents::tool_call::ToolCallTicket)> =
             VecDeque::new();
 
         for op in ops {
             match op {
                 Op::Present { turn, attempt, call } => {
                     match present(&mut registry, turn, attempt, call) {
-                        Admission::Execute(ticket) => {
+                        ToolCallAdmission::Execute(ticket) => {
                             prop_assert!(
                                 executed.insert((turn, call)),
                                 "second Execute admitted for ({turn}, call-{call})"
                             );
                             outstanding.push_back(((turn, call), ticket));
                         }
-                        Admission::Recorded(result) => {
+                        ToolCallAdmission::Recorded(result) => {
                             prop_assert_eq!(
                                 result,
                                 canonical_result(turn, call),
                                 "recorded service diverged from the single execution"
                             );
                         }
-                        Admission::AwaitExisting | Admission::Fenced => {}
+                        ToolCallAdmission::AwaitExisting | ToolCallAdmission::Fenced => {}
                     }
                 }
                 Op::CompleteOldest => {
@@ -91,7 +90,7 @@ proptest! {
         }
     }
 
-    // Feature: mcp-bridge, Property 3: registry replay equivalence
+    // registry replay equivalence
     //
     // The registry is a deterministic fold of its admission history: a
     // fresh registry replaying the same operations from any crash point
@@ -99,13 +98,13 @@ proptest! {
     // anything outside the recorded operations.
     #[test]
     fn p3_registry_replay_equivalence(ops in ops(), split in 0usize..120) {
-        fn run(ops: &[Op]) -> InvocationRegistry {
-            let mut registry = InvocationRegistry::new();
+        fn run(ops: &[Op]) -> ToolCallTracker {
+            let mut registry = ToolCallTracker::new();
             let mut outstanding = VecDeque::new();
             for op in ops {
                 match *op {
                     Op::Present { turn, attempt, call } => {
-                        if let Admission::Execute(ticket) =
+                        if let ToolCallAdmission::Execute(ticket) =
                             present(&mut registry, turn, attempt, call)
                         {
                             outstanding.push_back(((turn, call), ticket));
@@ -132,12 +131,12 @@ proptest! {
         // what replay must guarantee.
         let split = split.min(ops.len());
         let prefix_then_suffix = {
-            let mut registry = InvocationRegistry::new();
+            let mut registry = ToolCallTracker::new();
             let mut outstanding = VecDeque::new();
             for op in &ops[..split] {
                 match *op {
                     Op::Present { turn, attempt, call } => {
-                        if let Admission::Execute(ticket) =
+                        if let ToolCallAdmission::Execute(ticket) =
                             present(&mut registry, turn, attempt, call)
                         {
                             outstanding.push_back(((turn, call), ticket));
@@ -153,7 +152,7 @@ proptest! {
             for op in &ops[split..] {
                 match *op {
                     Op::Present { turn, attempt, call } => {
-                        if let Admission::Execute(ticket) =
+                        if let ToolCallAdmission::Execute(ticket) =
                             present(&mut registry, turn, attempt, call)
                         {
                             outstanding.push_back(((turn, call), ticket));
@@ -171,14 +170,14 @@ proptest! {
         prop_assert_eq!(&original, &prefix_then_suffix);
     }
 
-    // Feature: mcp-bridge, Property 4: fencing
+    // fencing
     //
     // For any interleaving, no unrecorded call stamped with an attempt
     // below its turn's watermark is admitted to execute; superseded calls
     // are served from the registry where recorded and fenced otherwise.
     #[test]
     fn p4_fencing(ops in ops()) {
-        let mut registry = InvocationRegistry::new();
+        let mut registry = ToolCallTracker::new();
         let mut watermark: HashMap<u32, u32> = HashMap::new();
         let mut recorded_or_inflight: HashSet<(u32, u8)> = HashSet::new();
         let mut outstanding = VecDeque::new();
@@ -191,7 +190,7 @@ proptest! {
                     let admission = present(&mut registry, turn, attempt, call);
                     if superseded && !known {
                         prop_assert!(
-                            matches!(admission, Admission::Fenced),
+                            matches!(admission, ToolCallAdmission::Fenced),
                             "superseded unrecorded call was not fenced ({turn},{attempt},{call})"
                         );
                     }
@@ -199,12 +198,12 @@ proptest! {
                         prop_assert!(
                             matches!(
                                 admission,
-                                Admission::Recorded(_) | Admission::AwaitExisting
+                                ToolCallAdmission::Recorded(_) | ToolCallAdmission::AwaitExisting
                             ),
                             "superseded known call must be served, not re-executed"
                         );
                     }
-                    if let Admission::Execute(ticket) = admission {
+                    if let ToolCallAdmission::Execute(ticket) = admission {
                         prop_assert!(!superseded, "fence breached: stale attempt executed");
                         recorded_or_inflight.insert((turn, call));
                         outstanding.push_back(((turn, call), ticket));

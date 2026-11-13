@@ -46,20 +46,20 @@ See [approval-resume](examples/approval-resume.md) for that process boundary.
 ## Tool
 
 A `Tool` has a model-visible name and description, a JSON Schema for its
-arguments, an async handler, and a `ToolPolicy`. The policy controls the tool
+arguments, an async handler, and a `ToolExecutionPolicy`. The policy controls the tool
 activity's start-to-close timeout, optional schedule-to-close and heartbeat
 timeouts, and maximum attempts.
 
-With the `preview` bridge enabled, the handler receives a `ToolContext` with
+With the `preview` MCP tool server enabled, the handler receives a `ToolContext` with
 the workflow run ID, turn, turn-attempt number, and harness invocation ID. Use
 that identity as the idempotency key for external side effects. A retryable
 `ToolFailure` follows the activity retry policy; a terminal failure is
 returned to the model without another attempt. Exhausted retries also become a
 model-visible tool error rather than silently killing the turn.
 
-With `preview` disabled, the bridge is inert and a registered handler is not
-executed. Harness-native tooling remains available through
-`Agent::with_allowed_native_tools`. Read [durable tools](durable-tools.md)
+With `preview` disabled, the MCP tool server is inert and a registered handler is not
+executed. Harness-native tool_config remains available through
+`Agent::with_allowed_tools`. Read [durable tools](durable-tools.md)
 before enabling framework-owned tools.
 
 ## Handoff
@@ -69,8 +69,8 @@ model calls it, the current `AgentRun` starts the target agent's own
 `AgentRun` as a child workflow, passes the model's `input` string as handoff
 context, and waits for the child before answering the tool call.
 
-The `preview` MCP bridge is the path that makes this framework tool reachable
-inside a harness turn. With the bridge disabled, no handoff handler is invoked.
+The `preview` MCP tool server is the path that makes this framework tool reachable
+inside a harness turn. With the MCP tool server disabled, no handoff handler is invoked.
 
 The default tool name is `transfer_to_<normalized-target>`; callers may
 override the name and description. The target must be registered on the same
@@ -82,7 +82,7 @@ worker. Child budgets and parent accounting are described in
 A `Guardrail` is a synchronous check over text. Input guardrails run before
 the first turn and therefore before model spend. Output guardrails run after
 each completed turn. `Pass` continues; `Block { reason }` ends the workflow
-with `RunEnd::GuardrailBlocked` and does not retry the turn.
+with `RunEndReason::GuardrailBlocked` and does not retry the turn.
 
 Guardrails execute inside workflow code. They must be deterministic: no I/O,
 clock reads, randomness, provider calls, or mutable process state. A check that
@@ -105,7 +105,7 @@ the approval seat.
 
 ## Run outcomes
 
-A successful non-interactive run ends as `RunEnd::Completed`; ending an
+A successful non-interactive run ends as `RunEndReason::Completed`; ending an
 interactive conversation produces `ConversationEnded`. Budget and guardrail
 termination are clean workflow results, mapped by the runner to
 `RunnerError::BudgetExceeded` or `RunnerError::GuardrailBlocked`.

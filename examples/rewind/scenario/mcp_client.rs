@@ -1,22 +1,22 @@
-//! The scripted providers' small HTTP MCP client.
+//! The scripted harness's small HTTP MCP client.
 
-use odori::agents::provider::{TurnError, TurnTooling};
+use odori::agents::provider::{ToolConfig, TurnError};
 use odori_dev_support::endpoint;
 use serde_json::{Value, json};
 
-pub(super) fn tooling(error: impl std::fmt::Display) -> TurnError {
+pub(super) fn tool_config_error(error: impl std::fmt::Display) -> TurnError {
     TurnError::Tooling {
         message: error.to_string(),
     }
 }
 
 pub(super) async fn call_tool(
-    tooling_config: &TurnTooling,
+    tool_config: &ToolConfig,
     name: &str,
     arguments: Value,
     call_id: &str,
 ) -> Result<Value, TurnError> {
-    let (url, authorization) = endpoint(tooling_config)?;
+    let (url, authorization) = endpoint(tool_config)?;
     let body = reqwest::Client::new()
         .post(url)
         .header("Authorization", authorization)
@@ -32,32 +32,25 @@ pub(super) async fn call_tool(
         }))
         .send()
         .await
-        .map_err(tooling)?
+        .map_err(tool_config_error)?
         .text()
         .await
-        .map_err(tooling)?;
+        .map_err(tool_config_error)?;
     let frame = body
         .lines()
         .filter_map(|line| line.strip_prefix("data: "))
         .next_back()
-        .ok_or_else(|| tooling("bridge returned no final SSE frame"))?;
-    serde_json::from_str(frame).map_err(tooling)
+        .ok_or_else(|| tool_config_error("mcp_server returned no final SSE frame"))?;
+    serde_json::from_str(frame).map_err(tool_config_error)
 }
 
 pub(super) fn tool_text(frame: &Value) -> Result<String, TurnError> {
     if let Some(error) = frame.pointer("/error/message").and_then(Value::as_str) {
-        return Err(tooling(error));
+        return Err(tool_config_error(error));
     }
     frame
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| tooling(format!("tool response has no text result: {frame}")))
-}
-
-pub(super) fn ensure_tool_error(frame: &Value, label: &str) -> Result<(), TurnError> {
-    match frame.pointer("/result/isError").and_then(Value::as_bool) {
-        Some(true) => Ok(()),
-        _ => Err(tooling(format!("{label} unexpectedly succeeded: {frame}"))),
-    }
+        .ok_or_else(|| tool_config_error(format!("tool response has no text result: {frame}")))
 }

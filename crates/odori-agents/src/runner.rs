@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use crate::{
     output::{AgentOutput, OutputParseError},
-    run::{AgentRun, RunConfig, RunEnd, RunInput, RunOutput, TurnActivities, TurnRecord},
+    run::{AgentRun, RunConfig, RunEndReason, RunInput, RunOutput, TurnActivities, TurnRecord},
     telemetry,
 };
 
@@ -211,14 +211,14 @@ impl Runner {
 
     fn interpret<O: AgentOutput>(output: RunOutput) -> Result<O, RunnerError> {
         match output.end {
-            RunEnd::Completed | RunEnd::ConversationEnded => {
+            RunEndReason::Completed | RunEndReason::ConversationEnded => {
                 O::parse(&output.text).map_err(RunnerError::Output)
             }
-            RunEnd::BudgetExceeded { cap } => Err(RunnerError::BudgetExceeded {
+            RunEndReason::BudgetExceeded { cap } => Err(RunnerError::BudgetExceeded {
                 cap: format!("{cap:?}"),
                 partial: Box::new(output),
             }),
-            RunEnd::GuardrailBlocked { guardrail, reason } => {
+            RunEndReason::GuardrailBlocked { guardrail, reason } => {
                 Err(RunnerError::GuardrailBlocked { guardrail, reason })
             }
         }

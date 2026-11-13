@@ -19,7 +19,7 @@
 //!   [`guardrail::RunBudget`] turn/token/cost caps enforced by the run loop.
 //! - [`output::AgentOutput`] — typed outputs: a run produces a value, not a
 //!   string.
-//! - [`provider::Provider`] — the frozen seam to model backends; the unit
+//! - [`provider::Provider`] — the provider contract to model backends; the unit
 //!   is one harness turn.
 //!
 //! Nothing here talks to a model vendor directly: providers live in
@@ -29,25 +29,26 @@
 pub mod agent;
 pub mod guardrail;
 pub mod handoff;
-pub mod invocation;
 pub mod output;
 pub mod provider;
 pub mod run;
 pub mod runner;
 pub(crate) mod telemetry;
 pub mod tool;
+pub mod tool_call;
 
 pub use agent::{Agent, AgentRegistry};
 pub use guardrail::{Guardrail, GuardrailVerdict, RunBudget};
 pub use handoff::{Handoff, HandoffContext};
-pub use invocation::{InvocationId, InvocationRegistry, ToolCallResult};
 pub use output::{AgentOutput, Json};
 pub use provider::{
-    Effort, Provider, ProviderLimitStatus, TurnError, TurnEventSink, TurnOutcome, TurnRequest,
+    Provider, ProviderLimitStatus, ReasoningEffort, TurnError, TurnEventSink, TurnOutcome,
+    TurnRequest,
 };
 pub use run::{
-    AgentRun, BudgetCap, Providers, RunConfig, RunEnd, RunOutput, RunUsage, TurnActivities,
-    TurnRecord,
+    AgentRun, BudgetCap, ProviderRegistry, RunConfig, RunEndReason, RunOutput, RunUsage,
+    TurnActivities, TurnRecord,
 };
 pub use runner::{Conversation, Runner, RunnerError, register_odori};
-pub use tool::{Tool, ToolFailure, ToolPolicy};
+pub use tool::{Tool, ToolExecutionPolicy, ToolFailure};
+pub use tool_call::{ToolCallId, ToolCallResult, ToolCallTracker};

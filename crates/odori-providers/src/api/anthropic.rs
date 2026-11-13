@@ -4,20 +4,20 @@
 //! One turn = the internal completion-and-tool loop run to quiescence
 //! (see the `api` module docs for the tier's shape and v0 posture).
 //! Streaming SSE events become heartbeats; `tool_use` stop reasons
-//! dispatch through the bridge; typed outputs use the Messages API's
+//! dispatch through the MCP tool server; typed outputs use the Messages API's
 //! native `output_config.format` JSON-Schema mechanism. Conversations are
 //! continuity-within-process: sessions live in the provider's memory,
 //! keyed by generated ids.
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    Provider, ReasoningEffort, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
     TurnRequest, TurnUsage,
 };
 use serde_json::{Value, json};
 
 use super::{
-    BridgeTools, MAX_HTTP_ATTEMPTS, SessionStore, api_key, backoff_delay, header_limit_status,
+    MAX_HTTP_ATTEMPTS, McpToolClient, SessionStore, api_key, backoff_delay, header_limit_status,
     is_transient, read_sse, retry_after_hint, wait_out,
 };
 
@@ -32,8 +32,8 @@ pub struct AnthropicConfig {
     /// `max_tokens` per model request.
     pub max_tokens: u32,
     /// Provider-level default thinking budget, applied to turns whose
-    /// agent sets no [`Effort`]. An agent-level effort always wins —
-    /// including [`Effort::None`], which explicitly disables thinking.
+    /// agent sets no [`ReasoningEffort`]. An agent-level effort always wins —
+    /// including [`ReasoningEffort::None`], which explicitly disables thinking.
     /// The raw escape hatch for operators who want an exact budget
     /// instead of the ladder's documented points.
     pub thinking_budget: Option<u32>,
@@ -77,7 +77,7 @@ impl AnthropicConfig {
 
     /// Set an exact default thinking budget for turns whose agent sets no
     /// effort (the raw alternative to the ladder's documented points).
-    /// Agent-level [`Effort`] always overrides it, and [`Effort::None`]
+    /// Agent-level [`ReasoningEffort`] always overrides it, and [`ReasoningEffort::None`]
     /// disables thinking outright. Validated on use: at least 1024 (the
     /// API's minimum) and strictly below `max_tokens`.
     pub fn with_thinking_budget(mut self, budget: u32) -> Self {
@@ -92,15 +92,18 @@ impl AnthropicConfig {
 /// `Minimal` buys the API's 1024-token minimum. The API requires
 /// `budget_tokens` strictly below `max_tokens`, so an oversized level
 /// fails typed with the remedy instead of a 400 mid-turn.
-fn anthropic_thinking_budget(effort: Effort, max_tokens: u32) -> Result<Option<u32>, TurnError> {
+fn anthropic_thinking_budget(
+    effort: ReasoningEffort,
+    max_tokens: u32,
+) -> Result<Option<u32>, TurnError> {
     let budget = match effort {
-        Effort::None => return Ok(None),
-        Effort::Minimal => 1024,
-        Effort::Low => 2048,
-        Effort::Medium => 4096,
-        Effort::High => 8192,
-        Effort::XHigh => 16_384,
-        Effort::Max => 32_768,
+        ReasoningEffort::None => return Ok(None),
+        ReasoningEffort::Minimal => 1024,
+        ReasoningEffort::Low => 2048,
+        ReasoningEffort::Medium => 4096,
+        ReasoningEffort::High => 8192,
+        ReasoningEffort::XHigh => 16_384,
+        ReasoningEffort::Max => 32_768,
     };
     if budget >= max_tokens {
         return Err(TurnError::Config {
@@ -160,9 +163,9 @@ impl AnthropicProvider {
     }
 }
 
-/// What one streamed Messages exchange produced.
+/// What one streamed Messages API response produced.
 #[derive(Debug, Default)]
-struct Exchange {
+struct ModelResponse {
     content: Vec<Value>,
     stop_reason: Option<String>,
     input_tokens: u64,
@@ -183,9 +186,9 @@ impl Provider for AnthropicProvider {
         events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
         let key = api_key("ANTHROPIC_API_KEY", "Anthropic Messages API")?;
-        let bridge = BridgeTools::resolve(&request.tooling)?;
-        let tools = match &bridge {
-            Some(bridge) => bridge.list().await?,
+        let mcp_server = McpToolClient::resolve(&request.tool_config)?;
+        let tools = match &mcp_server {
+            Some(mcp_server) => mcp_server.list().await?,
             None => Vec::new(),
         };
         let tool_defs: Vec<Value> = tools
@@ -212,7 +215,7 @@ impl Provider for AnthropicProvider {
         };
         messages.push(json!({"role": "user", "content": request.input}));
 
-        // Effort validates before the first request leaves the process.
+        // ReasoningEffort validates before the first request leaves the process.
         // Precedence mirrors model selection: the provider-level default
         // applies only when the agent sets no effort of its own.
         let thinking_budget = match request.directives.effort {
@@ -250,11 +253,11 @@ impl Provider for AnthropicProvider {
                     body["thinking"] = json!({"type": "enabled", "budget_tokens": budget});
                 }
 
-                let exchange = self.stream_once(&key, &body, &events).await?;
-                total_input += exchange.input_tokens;
-                total_output += exchange.output_tokens;
-                total_cached_input += exchange.cached_input_tokens;
-                total_cache_creation += exchange.cache_creation_input_tokens;
+                let response = self.stream_once(&key, &body, &events).await?;
+                total_input += response.input_tokens;
+                total_output += response.output_tokens;
+                total_cached_input += response.cached_input_tokens;
+                total_cache_creation += response.cache_creation_input_tokens;
                 let mut usage = TurnUsage::default();
                 usage.input_tokens = Some(total_input);
                 usage.output_tokens = Some(total_output);
@@ -262,9 +265,9 @@ impl Provider for AnthropicProvider {
                 usage.cache_creation_input_tokens = Some(total_cache_creation);
                 usage.duration = Some(started.elapsed());
                 events.report_usage(usage);
-                messages.push(json!({"role": "assistant", "content": exchange.content}));
+                messages.push(json!({"role": "assistant", "content": response.content}));
 
-                let tool_calls: Vec<(String, String, Value)> = exchange
+                let tool_calls: Vec<(String, String, Value)> = response
                     .content
                     .iter()
                     .filter(|block| block["type"] == "tool_use")
@@ -277,17 +280,17 @@ impl Provider for AnthropicProvider {
                     })
                     .collect();
 
-                if exchange.stop_reason.as_deref() == Some("tool_use") && !tool_calls.is_empty() {
-                    let Some(bridge) = &bridge else {
+                if response.stop_reason.as_deref() == Some("tool_use") && !tool_calls.is_empty() {
+                    let Some(mcp_server) = &mcp_server else {
                         break 'turn Err(TurnError::Tooling {
-                            message: "the model requested a tool but no bridge is attached"
+                            message: "the model requested a tool but no mcp_server is configured"
                                 .to_owned(),
                         });
                     };
                     let mut results = Vec::new();
                     for (call_id, name, input) in tool_calls {
                         events.emit(TurnEvent::ToolUse { name: name.clone() });
-                        let result = bridge.call(&name, &call_id, &input).await?;
+                        let result = mcp_server.call(&name, &call_id, &input).await?;
                         results.push(json!({
                             "type": "tool_result",
                             "tool_use_id": call_id,
@@ -300,7 +303,7 @@ impl Provider for AnthropicProvider {
                 }
 
                 // Quiescence: concatenate the final message's text blocks.
-                let text = exchange
+                let text = response
                     .content
                     .iter()
                     .filter(|block| block["type"] == "text")
@@ -336,9 +339,9 @@ impl AnthropicProvider {
         key: &str,
         body: &Value,
         events: &TurnEventSink,
-    ) -> Result<Exchange, TurnError> {
+    ) -> Result<ModelResponse, TurnError> {
         let mut attempt = 0;
-        let response = loop {
+        let http_response = loop {
             events.emit(TurnEvent::Liveness);
             let sent = self
                 .http
@@ -375,7 +378,7 @@ impl AnthropicProvider {
         };
 
         let limit = header_limit_status(
-            response.headers(),
+            http_response.headers(),
             "anthropic-ratelimit-requests-remaining",
             "anthropic-ratelimit-tokens-remaining",
         );
@@ -383,11 +386,11 @@ impl AnthropicProvider {
             events.emit(TurnEvent::LimitObserved { limit });
         }
 
-        let mut exchange = Exchange::default();
+        let mut response = ModelResponse::default();
         // Streaming assembly: text deltas append to text blocks; tool_use
         // blocks accumulate partial JSON until their stop.
         let mut partial_json: Vec<(usize, String)> = Vec::new();
-        read_sse(response, |frame| {
+        read_sse(http_response, |frame| {
             let Ok(data) = serde_json::from_str::<Value>(&frame.data) else {
                 return;
             };
@@ -398,28 +401,28 @@ impl AnthropicProvider {
                             .and_then(Value::as_u64)
                             .unwrap_or(0)
                     };
-                    exchange.input_tokens += usage_field("input_tokens");
-                    exchange.cached_input_tokens += usage_field("cache_read_input_tokens");
-                    exchange.cache_creation_input_tokens +=
+                    response.input_tokens += usage_field("input_tokens");
+                    response.cached_input_tokens += usage_field("cache_read_input_tokens");
+                    response.cache_creation_input_tokens +=
                         usage_field("cache_creation_input_tokens");
                 }
                 "content_block_start" => {
                     let index = data["index"].as_u64().unwrap_or(0) as usize;
                     let block = data["content_block"].clone();
-                    while exchange.content.len() <= index {
-                        exchange.content.push(json!(null));
+                    while response.content.len() <= index {
+                        response.content.push(json!(null));
                     }
                     if block["type"] == "tool_use" {
                         partial_json.push((index, String::new()));
                     }
-                    exchange.content[index] = block;
+                    response.content[index] = block;
                 }
                 "content_block_delta" => {
                     let index = data["index"].as_u64().unwrap_or(0) as usize;
                     match data.pointer("/delta/type").and_then(Value::as_str) {
                         Some("text_delta") => {
                             if let Some(text) = data.pointer("/delta/text").and_then(Value::as_str)
-                                && let Some(block) = exchange.content.get_mut(index)
+                                && let Some(block) = response.content.get_mut(index)
                                 && let Some(existing) = block["text"].as_str()
                             {
                                 block["text"] = json!(format!("{existing}{text}"));
@@ -442,7 +445,7 @@ impl AnthropicProvider {
                         Some("thinking_delta") => {
                             if let Some(fragment) =
                                 data.pointer("/delta/thinking").and_then(Value::as_str)
-                                && let Some(block) = exchange.content.get_mut(index)
+                                && let Some(block) = response.content.get_mut(index)
                             {
                                 let existing = block["thinking"].as_str().unwrap_or_default();
                                 block["thinking"] = json!(format!("{existing}{fragment}"));
@@ -451,7 +454,7 @@ impl AnthropicProvider {
                         Some("signature_delta") => {
                             if let Some(fragment) =
                                 data.pointer("/delta/signature").and_then(Value::as_str)
-                                && let Some(block) = exchange.content.get_mut(index)
+                                && let Some(block) = response.content.get_mut(index)
                             {
                                 let existing = block["signature"].as_str().unwrap_or_default();
                                 block["signature"] = json!(format!("{existing}{fragment}"));
@@ -467,7 +470,7 @@ impl AnthropicProvider {
                         .position(|(block_index, _)| *block_index == index)
                     {
                         let (_, accumulated) = partial_json.remove(position);
-                        if let Some(block) = exchange.content.get_mut(index) {
+                        if let Some(block) = response.content.get_mut(index) {
                             block["input"] =
                                 serde_json::from_str(&accumulated).unwrap_or_else(|_| json!({}));
                         }
@@ -476,9 +479,9 @@ impl AnthropicProvider {
                 "message_delta" => {
                     if let Some(reason) = data.pointer("/delta/stop_reason").and_then(Value::as_str)
                     {
-                        exchange.stop_reason = Some(reason.to_owned());
+                        response.stop_reason = Some(reason.to_owned());
                     }
-                    exchange.output_tokens += data
+                    response.output_tokens += data
                         .pointer("/usage/output_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
@@ -488,8 +491,8 @@ impl AnthropicProvider {
             events.emit(TurnEvent::Liveness);
         })
         .await?;
-        exchange.content.retain(|block| !block.is_null());
-        Ok(exchange)
+        response.content.retain(|block| !block.is_null());
+        Ok(response)
     }
 }
 
@@ -521,24 +524,24 @@ mod tests {
     #[test]
     fn effort_maps_to_documented_budgets_and_guards_the_ceiling() {
         assert_eq!(
-            anthropic_thinking_budget(Effort::None, 16_000).expect("explicit none maps"),
+            anthropic_thinking_budget(ReasoningEffort::None, 16_000).expect("explicit none maps"),
             None,
             "none keeps thinking disabled"
         );
         for (level, budget) in [
-            (Effort::Minimal, 1024),
-            (Effort::Low, 2048),
-            (Effort::Medium, 4096),
-            (Effort::High, 8192),
-            (Effort::XHigh, 16_384),
-            (Effort::Max, 32_768),
+            (ReasoningEffort::Minimal, 1024),
+            (ReasoningEffort::Low, 2048),
+            (ReasoningEffort::Medium, 4096),
+            (ReasoningEffort::High, 8192),
+            (ReasoningEffort::XHigh, 16_384),
+            (ReasoningEffort::Max, 32_768),
         ] {
             assert_eq!(
                 anthropic_thinking_budget(level, 64_000).expect("fits below the ceiling"),
                 Some(budget)
             );
         }
-        match anthropic_thinking_budget(Effort::XHigh, 16_000) {
+        match anthropic_thinking_budget(ReasoningEffort::XHigh, 16_000) {
             Err(TurnError::Config { message }) => {
                 assert!(message.contains("16384") && message.contains("with_max_tokens"));
             }

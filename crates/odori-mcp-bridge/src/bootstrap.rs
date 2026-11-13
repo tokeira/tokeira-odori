@@ -1,10 +1,10 @@
-//! Bridge lifecycle and harness attachment: mint per-attempt bearer
+//! MCP tool server lifecycle and harness bootstrap: mint per-attempt bearer
 //! tokens, keep the token → turn-context directory, and hand providers the
 //! MCP config that points their harness at the in-process server.
 //!
 //! Tokens are **per turn-attempt**, not per run. This is load-bearing for
 //! fencing: the attempt stamped on an
-//! invocation must be the attempt that *spawned the harness making the
+//! tool call must be the attempt that *spawned the harness making the
 //! call*, so a zombie harness keeps presenting its stale token and its
 //! calls carry the superseded attempt the registry fences. A per-run token
 //! would stamp zombie calls with the current attempt and dissolve the fence.
@@ -17,18 +17,18 @@ use std::{
 
 use odori_agents::{
     agent::AgentRegistry,
-    provider::{AttachmentSource, McpServerConfig, McpTransport, TurnAttachment, TurnIdentity},
+    provider::{McpBootstrapper, McpConfig, McpServerConfig, McpTransport, TurnId},
 };
 use serde_json::{Value, json};
 
-use crate::broker::{CallBroker, UpdateClient};
+use crate::broker::{CallBroker, ToolCallDispatcher};
 
-/// Bridge configuration.
+/// MCP tool server configuration.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct BridgeConfig {
+pub struct McpToolServerConfig {
     /// Keepalive cadence while a call is pending. Must sit strictly below
-    /// `mcp_timeout_pin`; [`BridgeConfig::validate`] enforces the invariant.
+    /// `mcp_timeout_pin`; [`McpToolServerConfig::validate`] enforces the invariant.
     pub keepalive: Duration,
     /// The MCP client timeout the provider pins on the harness at spawn.
     pub mcp_timeout_pin: Option<Duration>,
@@ -40,7 +40,7 @@ pub struct BridgeConfig {
     pub max_result_bytes: usize,
 }
 
-impl Default for BridgeConfig {
+impl Default for McpToolServerConfig {
     fn default() -> Self {
         Self {
             keepalive: Duration::from_secs(10),
@@ -51,8 +51,8 @@ impl Default for BridgeConfig {
     }
 }
 
-impl BridgeConfig {
-    /// Check the keepalive-below-timeout invariant (spec I6).
+impl McpToolServerConfig {
+    /// Check the keepalive-below-timeout invariant.
     pub fn validate(&self) -> anyhow::Result<()> {
         if let Some(pin) = self.mcp_timeout_pin
             && self.keepalive >= pin
@@ -67,7 +67,7 @@ impl BridgeConfig {
     }
 }
 
-/// One attachment's frozen coordinates, resolved by bearer token.
+/// One turn attempt's coordinates, resolved by bearer token.
 #[derive(Debug, Clone)]
 pub(crate) struct RunContext {
     pub(crate) workflow_id: String,
@@ -76,11 +76,11 @@ pub(crate) struct RunContext {
     pub(crate) attempt: u32,
 }
 
-pub(crate) struct BridgeInner {
+pub(crate) struct McpToolServerInner {
     registry: Arc<AgentRegistry>,
     broker: CallBroker,
-    config: BridgeConfig,
-    /// Bearer token → the attachment it was minted for. Entries remain until
+    config: McpToolServerConfig,
+    /// Bearer token → the turn attempt it was minted for. Entries remain until
     /// the workflow is confirmed terminal: while a run is live, a stale token
     /// must keep resolving so its calls reach the registry and get *fenced*
     /// (a 401 would be indistinguishable from misconfiguration).
@@ -90,15 +90,15 @@ pub(crate) struct BridgeInner {
     terminal_watchers: Mutex<HashSet<String>>,
 }
 
-impl std::fmt::Debug for BridgeInner {
+impl std::fmt::Debug for McpToolServerInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BridgeInner")
+        f.debug_struct("McpToolServerInner")
             .field("server_name", &self.config.server_name)
             .finish_non_exhaustive()
     }
 }
 
-impl BridgeInner {
+impl McpToolServerInner {
     pub(crate) fn server_name(&self) -> &str {
         &self.config.server_name
     }
@@ -144,7 +144,7 @@ impl BridgeInner {
                 .lock()
                 .expect("terminal watcher lock")
                 .remove(&workflow_id);
-            tracing::debug!(workflow_id, removed, "evicted terminal run bridge tokens");
+            tracing::debug!(workflow_id, removed, "evicted terminal run MCP tokens");
         });
     }
 
@@ -180,28 +180,28 @@ impl BridgeInner {
     }
 }
 
-/// The running bridge: an HTTP listener plus the attachment directory. Also
-/// the [`AttachmentSource`] handed to the turn activities.
+/// The running MCP tool server: an HTTP listener plus the token-context directory. Also
+/// the [`McpBootstrapper`] handed to the turn activities.
 #[derive(Debug, Clone)]
-pub struct Bridge {
-    inner: Arc<BridgeInner>,
+pub struct McpToolServer {
+    inner: Arc<McpToolServerInner>,
     url: String,
 }
 
-impl Bridge {
+impl McpToolServer {
     /// Bind the loopback listener and start serving. The endpoint lives at
-    /// an ephemeral port; [`Bridge::url`] reports it.
+    /// an ephemeral port; [`McpToolServer::url`] reports it.
     pub async fn start(
         registry: Arc<AgentRegistry>,
-        client: Arc<dyn UpdateClient>,
-        config: BridgeConfig,
+        dispatcher: Arc<dyn ToolCallDispatcher>,
+        config: McpToolServerConfig,
     ) -> anyhow::Result<Self> {
         config.validate()?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let url = format!("http://{}/mcp", listener.local_addr()?);
-        let inner = Arc::new(BridgeInner {
+        let inner = Arc::new(McpToolServerInner {
             registry,
-            broker: CallBroker::new(client, config.keepalive),
+            broker: CallBroker::new(dispatcher, config.keepalive),
             config,
             directory: Mutex::new(HashMap::new()),
             terminal_watchers: Mutex::new(HashSet::new()),
@@ -210,19 +210,19 @@ impl Bridge {
         Ok(Self { inner, url })
     }
 
-    /// The bridge endpoint harnesses connect to.
+    /// The MCP tool server endpoint harnesses connect to.
     pub fn url(&self) -> &str {
         &self.url
     }
 }
 
-impl AttachmentSource for Bridge {
-    fn attachment_for(
+impl McpBootstrapper for McpToolServer {
+    fn bootstrap_mcp(
         &self,
         workflow_id: &str,
-        identity: &TurnIdentity,
+        turn_id: &TurnId,
         agent_name: &str,
-    ) -> Option<TurnAttachment> {
+    ) -> Option<McpConfig> {
         let agent = self.inner.registry.get(agent_name).ok()?;
         if agent.tools().is_empty() && agent.handoffs().is_empty() {
             return None;
@@ -234,13 +234,13 @@ impl AttachmentSource for Bridge {
             RunContext {
                 workflow_id: workflow_id.to_owned(),
                 agent: agent_name.to_owned(),
-                turn: identity.turn,
-                attempt: identity.attempt,
+                turn: turn_id.turn,
+                attempt: turn_id.attempt,
             },
         );
         self.inner.watch_terminal(workflow_id);
         let server = &self.inner.config.server_name;
-        Some(TurnAttachment::new(
+        Some(McpConfig::new(
             McpServerConfig {
                 name: server.clone(),
                 transport: McpTransport::Http {

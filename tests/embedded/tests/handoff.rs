@@ -1,5 +1,5 @@
 //! Handoff integration: a scripted harness calls the model-visible handoff
-//! tool through the real HTTP bridge, the parent starts the target's
+//! tool through the real HTTP MCP tool server, the parent starts the target's
 //! `AgentRun` as a child workflow, and child spend is accounted to both runs.
 
 use std::sync::{Arc, Mutex};
@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use async_trait::async_trait;
 use odori_agents::{
-    Agent, AgentRegistry, Handoff, Providers, RunBudget, RunEnd,
+    Agent, AgentRegistry, Handoff, ProviderRegistry, RunBudget, RunEndReason,
     provider::{
         Provider, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest, TurnUsage,
     },
@@ -15,7 +15,7 @@ use odori_agents::{
 use odori_dev_support::endpoint;
 use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 use serde_json::{Value, json};
 
 async fn call_handoff(url: &str, auth: &str) -> String {
@@ -34,7 +34,7 @@ async fn call_handoff(url: &str, auth: &str) -> String {
         }))
         .send()
         .await
-        .expect("bridge reachable")
+        .expect("mcp_server reachable")
         .text()
         .await
         .expect("SSE body");
@@ -72,7 +72,7 @@ impl Provider for HandoffHarness {
             session_id: session_id.clone(),
         });
         if request.directives.name == "parent" {
-            let (url, auth) = endpoint(&request.tooling).expect("bridge attached");
+            let (url, auth) = endpoint(&request.tool_config).expect("mcp_server attached");
             let text = call_handoff(&url, &auth).await;
             let mut usage = TurnUsage::default();
             usage.input_tokens = Some(10);
@@ -128,8 +128,8 @@ async fn handoff_is_child_workflow_and_counts_against_parent_budget() -> Result<
     let runtime = OdoriRuntime::builder("tq-handoff")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider.clone()))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(provider.clone()))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await?;
 
@@ -140,7 +140,7 @@ async fn handoff_is_child_workflow_and_counts_against_parent_budget() -> Result<
     let output = conversation.end().await?;
 
     assert_eq!(output.text, "specialist-result");
-    assert_eq!(output.end, RunEnd::ConversationEnded);
+    assert_eq!(output.end, RunEndReason::ConversationEnded);
     assert_eq!(output.turns, 2, "one parent turn plus one child turn");
     assert_eq!(output.usage.input_tokens, 17);
     assert_eq!(output.usage.output_tokens, 8);

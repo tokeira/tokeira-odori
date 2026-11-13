@@ -15,7 +15,7 @@ Odori has five primitives in the OpenAI Agents SDK's image: `Agent`, `Runner`,
 workflow; a turn is an activity; the session is history. Subscription providers
 drive Claude Code or Codex through the vendors' own authenticated harnesses;
 raw API providers form a secondary tier. Framework tools execute durably
-mid-turn through the MCP bridge. Crash anywhere and resume exactly. Snapshot a
+mid-turn through the MCP tool server. Crash anywhere and resume exactly. Snapshot a
 world, then rewind and fork. `cargo run` is the whole install.
 
 ## Quickstart
@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use odori::{
-    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, Providers,
+    Agent, AgentRegistry, ConnectTarget, EmbeddedEngineConfig, Engine, OdoriRuntime, ProviderRegistry,
     providers::CodexProvider,
 };
 
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     // Register an agent against the authenticated Codex subscription provider.
     let mut agents = AgentRegistry::new();
     agents.register(Agent::new("hello", "Answer clearly.").with_provider("codex"));
-    let providers = Providers::new(Arc::new(CodexProvider::new()));
+    let providers = ProviderRegistry::new(Arc::new(CodexProvider::new()));
 
     let runtime = OdoriRuntime::builder("hello-durable")
         .connect(ConnectTarget::service_override(engine.service_override()))
@@ -87,7 +87,7 @@ SDK resolve from crates.io, with nothing to patch or pin.
 - **`Runner`** starts a run or conversation and returns a typed result. A run
   ID identifies the durable workflow.
 - **`Tool`** gives a model a framework-owned capability. Under the `preview`
-  bridge, each call runs as an activity with explicit timeout and retry policy.
+  MCP tool server, each call runs as an activity with explicit timeout and retry policy.
 - **`Handoff`** exposes another registered agent as a tool. The target runs as
   a child workflow and its spend also counts against the parent.
 - **`Guardrail`** is a deterministic input or output check. Budget caps are
@@ -222,9 +222,9 @@ Start with the [examples index](docs/examples/README.md).
 
 ## Durable tools (`preview`)
 
-The optional `preview` feature starts one loopback streamable-HTTP MCP bridge
+The optional `preview` feature starts one loopback streamable-HTTP MCP tool server
 per process and attaches it to each harness turn that has framework tools. A
-tool call becomes a workflow update and then a tool activity. The bridge waits
+tool call becomes a workflow update and then a tool activity. The MCP tool server waits
 for the result to be recorded before replying, replays completed calls with the
 same identity, joins duplicate in-flight calls, and fences stale attempts.
 
@@ -252,7 +252,7 @@ framework tools currently ship behind `preview` while their harness protocol
 edges continue to soak. The raw API providers remain the secondary,
 feature-gated tier with the continuity boundaries stated above.
 
-The next stabilization work is to graduate the MCP bridge from `preview`,
+The next stabilization work is to graduate the MCP tool server from `preview`,
 expand provider conformance coverage as harness pins move, and grow the
 curated validator library without changing the deterministic `Guardrail`
 contract.

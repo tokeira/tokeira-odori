@@ -8,7 +8,7 @@
 //! `usage_cap`, `resume_missing`, `die`, `mcp`, `invalid_schema`,
 //! `schema_retries`, `unknown_model`. The `mcp` mode reads the
 //! `--mcp-config` argument and performs a real `tools/call` against the
-//! bridge over loopback HTTP, like the harness it stands in for. Under
+//! MCP tool server over loopback HTTP, like the harness it stands in for. Under
 //! `--json-schema`, echo mode answers through the synthetic
 //! `StructuredOutput` tool as the real CLI does.
 
@@ -175,7 +175,7 @@ fn main() {
                 .pointer("/result/content/0/text")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-                .unwrap_or_else(|| format!("bridge error: {reply}"));
+                .unwrap_or_else(|| format!("mcp_server error: {reply}"));
             if std::env::var("FAKE_CLAUDE_DIE_AFTER_CALL").is_ok() {
                 // Death between execution and delivery: the crash-mid-turn
                 // shape, this time through the real provider.
@@ -283,7 +283,7 @@ fn mcp_tools_call(url: &str, auth: &str, tool: &str, call_id: &str) -> Value {
         body.len()
     );
     let mut stream = TcpStream::connect(&address).unwrap_or_else(|error| {
-        eprintln!("bridge unreachable at {address}: {error}");
+        eprintln!("MCP tool server unreachable at {address}: {error}");
         std::process::exit(1);
     });
     stream.write_all(request.as_bytes()).ok();
@@ -295,7 +295,7 @@ fn mcp_tools_call(url: &str, auth: &str, tool: &str, call_id: &str) -> Value {
         .next_back()
         .and_then(|frame| serde_json::from_str(frame).ok())
         .unwrap_or_else(|| {
-            eprintln!("no final SSE frame from the bridge");
+            eprintln!("no final SSE frame from the mcp_server");
             std::process::exit(1);
         })
 }

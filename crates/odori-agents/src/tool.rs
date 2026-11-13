@@ -1,11 +1,11 @@
 //! The `Tool` primitive: a typed, framework-owned capability.
 //!
 //! In v0 (mcp-bridge `preview` off) a `Tool` is *declarative*: the runner
-//! delegates tool intent to the harness's native tooling
-//! ([`crate::provider::TurnTooling::allowed_native_tools`]), and the
+//! delegates tool intent to the harness's native tools
+//! ([`crate::provider::ToolConfig::allowed_tools`]), and the
 //! handler registered here is not executed. The declaration still matters:
-//! with `preview` on, each invocation becomes a tokeira activity governed
-//! by this tool's [`ToolPolicy`] and executed through the registered handler.
+//! with `preview` on, each tool call becomes a tokeira activity governed
+//! by this tool's [`ToolExecutionPolicy`] and executed through the registered handler.
 //! The API is identical on both sides of the feature flag.
 
 use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -20,8 +20,8 @@ pub type ToolFuture = Pin<Box<dyn Future<Output = Result<Value, ToolFailure>> + 
 type Handler = Arc<dyn Fn(ToolContext, Value) -> ToolFuture + Send + Sync>;
 
 /// Execution context handed to every tool handler: the durable identity of
-/// this invocation, usable directly as an idempotency key for the tool's
-/// own side effects (mcp-bridge spec, Requirement 2.4).
+/// this tool call, usable directly as an idempotency key for the tool's
+/// own side effects.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct ToolContext {
@@ -31,7 +31,7 @@ pub struct ToolContext {
     pub turn: u32,
     /// Turn-activity attempt that carried the call.
     pub attempt: u32,
-    /// The harness call id (the invocation's identity within the turn).
+    /// The harness call id (the tool call's identity within the turn).
     pub invocation_id: String,
 }
 
@@ -43,7 +43,7 @@ pub struct Tool {
     name: String,
     description: String,
     input_schema: Value,
-    policy: ToolPolicy,
+    policy: ToolExecutionPolicy,
     handler: Handler,
 }
 
@@ -64,13 +64,13 @@ impl Tool {
             name: name.into(),
             description: description.into(),
             input_schema,
-            policy: ToolPolicy::default(),
+            policy: ToolExecutionPolicy::default(),
             handler: Arc::new(move |context, args| Box::pin(handler(context, args))),
         }
     }
 
     /// Replace the execution policy.
-    pub fn with_policy(mut self, policy: ToolPolicy) -> Self {
+    pub fn with_policy(mut self, policy: ToolExecutionPolicy) -> Self {
         self.policy = policy;
         self
     }
@@ -90,8 +90,8 @@ impl Tool {
         &self.input_schema
     }
 
-    /// The execution policy the bridge applies to this tool's activity.
-    pub fn policy(&self) -> &ToolPolicy {
+    /// The execution policy applied to this tool's activity.
+    pub fn policy(&self) -> &ToolExecutionPolicy {
         &self.policy
     }
 
@@ -112,11 +112,11 @@ impl fmt::Debug for Tool {
     }
 }
 
-/// Per-tool durable-execution policy, mapped by the bridge onto the
-/// `execute_tool` activity's options (mcp-bridge Requirement 2.2).
+/// Per-tool durable-execution policy, mapped by the run loop onto the
+/// `execute_tool` activity's options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct ToolPolicy {
+pub struct ToolExecutionPolicy {
     /// Activity start-to-close timeout for one execution.
     pub start_to_close: Duration,
     /// Overall schedule-to-close ceiling across retries, if bounded.
@@ -128,7 +128,7 @@ pub struct ToolPolicy {
     pub max_attempts: Option<u32>,
 }
 
-impl Default for ToolPolicy {
+impl Default for ToolExecutionPolicy {
     fn default() -> Self {
         Self {
             start_to_close: Duration::from_secs(60),
@@ -140,18 +140,18 @@ impl Default for ToolPolicy {
 }
 
 /// A tool handler's failure: what the model reads when an execution fails
-/// terminally (surfaced as an MCP `isError` tool result by the bridge).
+/// terminally (surfaced as an MCP `isError` tool result by the MCP tool server).
 #[derive(Debug, Clone, Serialize, Deserialize, Error)]
 #[error("{message}")]
 pub struct ToolFailure {
     /// Model-facing description of the failure.
     pub message: String,
-    /// Whether the bridge may retry the execution before surfacing it.
+    /// Whether execution may be retried before surfacing the failure.
     pub retryable: bool,
 }
 
 impl ToolFailure {
-    /// A failure the bridge may retry per the tool's policy.
+    /// A failure that may be retried per the tool's execution policy.
     pub fn retryable(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),

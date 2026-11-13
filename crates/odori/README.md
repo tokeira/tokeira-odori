@@ -2,7 +2,7 @@
 
 `odori` is the facade crate for a minimal Rust agent framework where every run
 is durably executed. It re-exports the framework primitives, providers,
-embedded-engine integration, and the preview MCP bridge behind one dependency.
+embedded-engine integration, and the preview MCP tool server behind one dependency.
 
 The facade exports `Engine` and the engine's `EmbeddedEngineConfig` shapes.
 Applications may select ephemeral or snapshotted in-memory storage, managed

@@ -13,7 +13,7 @@ mod workspace;
 use std::{fs, path::Path, sync::Arc};
 
 use anyhow::{Result, ensure};
-use odori::RunEnd;
+use odori::RunEndReason;
 use odori_engine::EmbeddedStorageConfig;
 
 use model::{ApprovalCompletion, ApprovalDecision, PatchProposal, proposal};
@@ -48,7 +48,7 @@ pub async fn prepare(state_directory: &Path, print: bool) -> Result<PrepareRepor
     prepare_with_storage(state_directory, print, EmbeddedStorageConfig::InMemory).await
 }
 
-/// Record one proposal using an explicit E1 storage mode.
+/// Record one proposal using an explicit embedded-engine storage mode.
 pub async fn prepare_with_storage(
     state_directory: &Path,
     print: bool,
@@ -145,7 +145,7 @@ pub async fn resume(
     .await
 }
 
-/// Restore and finish using the same explicit E1 storage mode as prepare.
+/// Restore and finish using the same explicit embedded-engine storage mode as prepare.
 pub async fn resume_with_storage(
     state_directory: &Path,
     approved_plan_hash: &str,
@@ -192,7 +192,7 @@ pub async fn resume_with_storage(
     })?;
     conversation.send(&decision).await?;
     let output = conversation.end().await?;
-    ensure!(matches!(output.end, RunEnd::ConversationEnded));
+    ensure!(matches!(output.end, RunEndReason::ConversationEnded));
     ensure!(
         output.turns == 2,
         "restored workflow should contain two turns"

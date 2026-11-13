@@ -11,7 +11,7 @@
 //! every run executes durably on an embedded tokeira engine ([`engine`]),
 //! providers drive vendor harnesses as supervised subprocesses
 //! ([`providers`]), and framework-owned tools invoked mid-turn execute as
-//! durable activities through the MCP bridge ([`mcp_bridge`]).
+//! durable activities through the MCP tool server ([`mcp_bridge`]).
 //!
 //! The facade re-exports the public primitive, provider, and runtime crates;
 //! advanced APIs remain available through the `agents`, `providers`,
@@ -23,9 +23,9 @@ pub use odori_mcp_bridge as mcp_bridge;
 pub use odori_providers as providers;
 
 pub use odori_agents::{
-    Agent, AgentOutput, AgentRegistry, Conversation, Effort, Guardrail, GuardrailVerdict, Json,
-    Provider, ProviderLimitStatus, Providers, RunBudget, RunConfig, RunEnd, RunOutput, Runner,
-    RunnerError, Tool, ToolFailure, ToolPolicy, TurnRecord,
+    Agent, AgentOutput, AgentRegistry, Conversation, Guardrail, GuardrailVerdict, Json, Provider,
+    ProviderLimitStatus, ProviderRegistry, ReasoningEffort, RunBudget, RunConfig, RunEndReason,
+    RunOutput, Runner, RunnerError, Tool, ToolExecutionPolicy, ToolFailure, TurnRecord,
 };
 pub use odori_engine::{
     ClusterStartupReport, ConnectTarget, DsqlMigrationPolicy, EmbeddedConfigError,

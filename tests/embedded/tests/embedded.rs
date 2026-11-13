@@ -16,7 +16,7 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use odori_agents::{
-    Agent, AgentRegistry, Guardrail, GuardrailVerdict, Json, RunBudget, RunConfig, RunEnd,
+    Agent, AgentRegistry, Guardrail, GuardrailVerdict, Json, RunBudget, RunConfig, RunEndReason,
     RunnerError,
     provider::{
         Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
@@ -86,10 +86,7 @@ impl Provider for ScriptedProvider {
                 script.remove(0)
             }
         };
-        let session_id = format!(
-            "sess-{}-a{}",
-            request.identity.turn, request.identity.attempt
-        );
+        let session_id = format!("sess-{}-a{}", request.turn_id.turn, request.turn_id.attempt);
         match behaviour {
             Behaviour::Echo => {
                 events.emit(TurnEvent::SessionStarted {
@@ -155,8 +152,8 @@ async fn single_turn_completes_over_zero_tcp_transport() -> Result<()> {
     let requests = provider.requests();
     assert_eq!(requests.len(), 1);
     assert!(matches!(requests[0].session, SessionDirective::Start));
-    assert_eq!(requests[0].identity.turn, 0);
-    assert_eq!(requests[0].identity.attempt, 1);
+    assert_eq!(requests[0].turn_id.turn, 0);
+    assert_eq!(requests[0].turn_id.attempt, 1);
     assert_eq!(requests[0].directives.instructions, "echo things");
 
     runtime.shutdown().await?;
@@ -213,9 +210,9 @@ async fn failed_attempt_retries_and_resumes_forked_from_heartbeat() -> Result<()
 
     let requests = provider.requests();
     assert_eq!(requests.len(), 2, "attempt 1 fails, attempt 2 succeeds");
-    assert_eq!(requests[0].identity.attempt, 1);
+    assert_eq!(requests[0].turn_id.attempt, 1);
     assert!(matches!(requests[0].session, SessionDirective::Start));
-    assert_eq!(requests[1].identity.attempt, 2);
+    assert_eq!(requests[1].turn_id.attempt, 2);
     // The retried attempt recovered the dead attempt's session id from
     // heartbeat details and resumed it forked.
     assert!(
@@ -320,7 +317,7 @@ async fn interactive_conversation_forks_turns_and_ends() -> Result<()> {
 
     assert_eq!(output.turns, 2);
     assert_eq!(output.text, "echo: second message");
-    assert_eq!(output.end, RunEnd::ConversationEnded);
+    assert_eq!(output.end, RunEndReason::ConversationEnded);
 
     let requests = provider.requests();
     assert_eq!(requests.len(), 2);
@@ -403,7 +400,7 @@ async fn budget_and_guardrails_end_runs_typed() -> Result<()> {
     assert_eq!(output.turns, 1);
     assert_eq!(
         output.end,
-        RunEnd::BudgetExceeded {
+        RunEndReason::BudgetExceeded {
             cap: odori_agents::run::BudgetCap::Turns { spent: 1, cap: 1 }
         }
     );

@@ -3,12 +3,12 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result};
-use odori::{Conversation, Providers, TurnRecord};
+use odori::{Conversation, ProviderRegistry, TurnRecord};
 use odori_engine::{
     ConnectTarget, EmbeddedEngineConfig, EmbeddedStorageConfig, Engine, OdoriRuntime,
     SnapshotPolicyConfig, TokeiraConfig,
 };
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 
 use super::{
     provider::ApprovalProvider,
@@ -45,8 +45,8 @@ pub(super) async fn start_runtime(
     OdoriRuntime::builder(TASK_QUEUE)
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry(state))
-        .providers(Providers::new(Arc::new(ApprovalProvider)))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(Arc::new(ApprovalProvider)))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await
 }

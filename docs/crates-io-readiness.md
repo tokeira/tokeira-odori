@@ -10,7 +10,7 @@ Publish in dependency order:
 
 1. `odori-agents`
 2. `odori-mcp-bridge`
-3. `odori-providers` and `odori-engine` (either order after the bridge)
+3. `odori-providers` and `odori-engine` (either order after `odori-mcp-bridge`)
 4. `odori`
 
 Exact crates.io registry lookups from outside the workspace found no existing
@@ -31,8 +31,8 @@ repository (`https://github.com/tokeira/tokeira-odori`), homepage
 | `odori` | `ai-agents`, `durable-execution`, `agent-framework`, `workflow`, `rust` | `asynchronous`, `development-tools` | `crates/odori/README.md` |
 
 The release-preparation pass removed one dev-dependency publication cycle. The
-quota-gated Codex bridge test now lives with the provider integration tests, so
-the bridge no longer needs `odori-providers` to package. Test behaviour and its
+quota-gated Codex MCP tool server test now lives with the provider integration tests, so
+`odori-mcp-bridge` no longer needs `odori-providers` to package. Test behaviour and its
 ignored-by-default quota gate are unchanged.
 
 ## Package contents and sizes

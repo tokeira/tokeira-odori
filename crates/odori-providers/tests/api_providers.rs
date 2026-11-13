@@ -11,7 +11,7 @@
 use std::sync::{Arc, Mutex};
 
 use odori_agents::provider::{
-    AgentDirectives, SessionDirective, TurnEvent, TurnEventSink, TurnIdentity, TurnRequest,
+    AgentDirectives, SessionDirective, TurnEvent, TurnEventSink, TurnId, TurnRequest,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -182,7 +182,7 @@ async fn write_response(stream: &mut tokio::net::TcpStream, response: Scripted) 
 
 fn request(input: &str, session: SessionDirective) -> TurnRequest {
     TurnRequest::new(
-        TurnIdentity {
+        TurnId {
             run_id: "run-api".to_owned(),
             turn: 0,
             attempt: 1,
@@ -198,17 +198,19 @@ fn sink() -> (TurnEventSink, tokio::sync::mpsc::Receiver<TurnEvent>) {
     (TurnEventSink::new(sender), receiver)
 }
 
-/// A real bridge with a recording update client, for the tool-path tests.
+/// A real MCP tool server with a recording update client, for the tool-path tests.
 #[cfg(any(feature = "api-anthropic", feature = "api-openai"))]
-mod bridge_support {
+mod mcp_support {
     use super::*;
     use async_trait::async_trait;
     use odori_agents::{
         Agent, AgentRegistry, Tool, ToolCallResult,
-        provider::AttachmentSource,
-        run::{ToolInvocation, ToolInvocationReply},
+        provider::McpBootstrapper,
+        run::{ToolCallReply, ToolCallRequest},
     };
-    use odori_mcp_bridge::{Bridge, BridgeConfig, BridgeError, UpdateClient};
+    use odori_mcp_bridge::{
+        McpToolServer, McpToolServerConfig, McpToolServerError, ToolCallDispatcher,
+    };
 
     #[derive(Debug, Default)]
     pub struct Recording {
@@ -216,30 +218,27 @@ mod bridge_support {
     }
 
     #[derive(Debug)]
-    pub struct RecordingUpdateClient(pub Arc<Recording>);
+    pub struct RecordingToolCallDispatcher(pub Arc<Recording>);
 
     #[async_trait]
-    impl UpdateClient for RecordingUpdateClient {
-        async fn tool_invoked(
+    impl ToolCallDispatcher for RecordingToolCallDispatcher {
+        async fn dispatch(
             &self,
             _workflow_id: &str,
-            invocation: ToolInvocation,
-        ) -> Result<ToolInvocationReply, BridgeError> {
-            self.0
-                .calls
-                .lock()
-                .expect("lock")
-                .push((invocation.tool.clone(), invocation.identity.call_id.clone()));
-            Ok(ToolInvocationReply::Completed(ToolCallResult::text(
-                format!(
-                    "bridged:{}:{}",
-                    invocation.tool, invocation.identity.call_id
-                ),
-            )))
+            tool_call: ToolCallRequest,
+        ) -> Result<ToolCallReply, McpToolServerError> {
+            self.0.calls.lock().expect("lock").push((
+                tool_call.tool.clone(),
+                tool_call.tool_call_id.call_id.clone(),
+            ));
+            Ok(ToolCallReply::Completed(ToolCallResult::text(format!(
+                "bridged:{}:{}",
+                tool_call.tool, tool_call.tool_call_id.call_id
+            ))))
         }
     }
 
-    pub async fn bridge_attachment() -> (Arc<Recording>, odori_agents::provider::TurnAttachment) {
+    pub async fn mcp_bootstrap() -> (Arc<Recording>, odori_agents::provider::McpConfig) {
         let mut registry = AgentRegistry::new();
         registry.register(
             Agent::new("api-agent", "answer plainly").with_tool(Tool::new(
@@ -250,34 +249,34 @@ mod bridge_support {
             )),
         );
         let recording = Arc::new(Recording::default());
-        let bridge = Bridge::start(
+        let mcp_server = McpToolServer::start(
             Arc::new(registry),
-            Arc::new(RecordingUpdateClient(recording.clone())),
-            BridgeConfig::default(),
+            Arc::new(RecordingToolCallDispatcher(recording.clone())),
+            McpToolServerConfig::default(),
         )
         .await
-        .expect("bridge start");
-        let attachment = bridge
-            .attachment_for(
+        .expect("start MCP tool server");
+        let mcp_config = mcp_server
+            .bootstrap_mcp(
                 "wf-api",
-                &TurnIdentity {
+                &TurnId {
                     run_id: "r".into(),
                     turn: 0,
                     attempt: 1,
                 },
                 "api-agent",
             )
-            .expect("attachment");
-        // Keep the bridge alive for the test's duration.
-        std::mem::forget(bridge);
-        (recording, attachment)
+            .expect("mcp_config");
+        // Keep the MCP tool server alive for the test's duration.
+        std::mem::forget(mcp_server);
+        (recording, mcp_config)
     }
 }
 
 #[cfg(feature = "api-anthropic")]
 mod anthropic {
     use super::*;
-    use odori_agents::provider::{Effort, Provider, TurnError};
+    use odori_agents::provider::{Provider, ReasoningEffort, TurnError};
     use odori_providers::{AnthropicConfig, AnthropicProvider};
 
     fn provider(base_url: &str) -> AnthropicProvider {
@@ -324,7 +323,7 @@ mod anthropic {
         let (events, mut receiver) = sink();
         let mut req = request("say hello", SessionDirective::Start);
         req.directives.output_schema = Some(json!({"type": "object"}));
-        req.directives.effort = Some(Effort::High);
+        req.directives.effort = Some(ReasoningEffort::High);
         let outcome = provider.execute_turn(req, events).await.expect("turn");
 
         assert_eq!(outcome.text, "Hello from the mock");
@@ -405,7 +404,7 @@ mod anthropic {
 
         let (events, _r) = sink();
         let mut req = request("explicit none", SessionDirective::Start);
-        req.directives.effort = Some(Effort::None);
+        req.directives.effort = Some(ReasoningEffort::None);
         provider.execute_turn(req, events).await.expect("none turn");
 
         let requests = mock.requests();
@@ -417,7 +416,7 @@ mod anthropic {
         );
         assert!(
             requests[1].1.get("thinking").is_none(),
-            "agent-level Effort::None overrides the provider default and disables thinking"
+            "agent-level ReasoningEffort::None overrides the provider default and disables thinking"
         );
     }
 
@@ -505,8 +504,8 @@ mod anthropic {
     }
 
     #[tokio::test]
-    async fn tool_loop_executes_through_the_real_bridge() {
-        let (recording, attachment) = bridge_support::bridge_attachment().await;
+    async fn tool_loop_executes_through_the_mcp_server() {
+        let (recording, mcp_config) = mcp_support::mcp_bootstrap().await;
         let mock = MockApi::start(vec![
             Scripted::Sse(vec![
                 (
@@ -541,13 +540,13 @@ mod anthropic {
         let provider = provider(&mock.url());
         let (events, mut receiver) = sink();
         let mut req = request("deploy prod please", SessionDirective::Start);
-        req.tooling.mcp_servers.push(attachment.mcp_server);
-        req.tooling.framework_tools = vec!["deploy".to_owned()];
+        req.tool_config.mcp_servers.push(mcp_config.mcp_server);
+        req.tool_config.framework_tool_names = vec!["deploy".to_owned()];
 
         let outcome = provider.execute_turn(req, events).await.expect("tool turn");
         assert_eq!(outcome.text, "deployment reported");
 
-        // The bridge executed the call under the API's tool-use id.
+        // The MCP tool server executed the call under the API's tool-use id.
         assert_eq!(
             recording.calls.lock().expect("lock").clone(),
             vec![("deploy".to_owned(), "toolu_api1".to_owned())]
@@ -573,7 +572,7 @@ mod anthropic {
 
     #[tokio::test]
     async fn thinking_blocks_survive_assembly_for_the_tool_loop() {
-        let (recording, attachment) = bridge_support::bridge_attachment().await;
+        let (recording, mcp_config) = mcp_support::mcp_bootstrap().await;
         let mock = MockApi::start(vec![
             Scripted::Sse(vec![
                 (
@@ -632,9 +631,9 @@ mod anthropic {
         let provider = provider(&mock.url());
         let (events, _receiver) = sink();
         let mut req = request("deploy prod thoughtfully", SessionDirective::Start);
-        req.directives.effort = Some(Effort::Medium);
-        req.tooling.mcp_servers.push(attachment.mcp_server);
-        req.tooling.framework_tools = vec!["deploy".to_owned()];
+        req.directives.effort = Some(ReasoningEffort::Medium);
+        req.tool_config.mcp_servers.push(mcp_config.mcp_server);
+        req.tool_config.framework_tool_names = vec!["deploy".to_owned()];
 
         let outcome = provider.execute_turn(req, events).await.expect("tool turn");
         assert_eq!(outcome.text, "thought and deployed");
@@ -679,18 +678,18 @@ mod anthropic {
         };
         assert!(message.contains("ANTHROPIC_API_KEY"), "{message}");
 
-        // Framework tools with no bridge: the operator ruling's explicit
+        // Framework tools with no MCP tool server: the operator ruling's explicit
         // configuration error, not a silent toolless run.
         set_test_key("ANTHROPIC_API_KEY");
         let provider =
             AnthropicProvider::with_config(AnthropicConfig::default().with_base_url("http://x"));
         let (events, _r) = sink();
         let mut req = request("hi", SessionDirective::Start);
-        req.tooling.framework_tools = vec!["deploy".to_owned()];
+        req.tool_config.framework_tool_names = vec!["deploy".to_owned()];
         let error = provider
             .execute_turn(req, events)
             .await
-            .expect_err("tools without a bridge must fail");
+            .expect_err("tools without a mcp_server must fail");
         let TurnError::Config { message } = &error else {
             panic!("must be Config: {error:?}");
         };
@@ -699,7 +698,7 @@ mod anthropic {
         // Native-tool scoping is impossible at this tier.
         let (events, _r) = sink();
         let mut req = request("hi", SessionDirective::Start);
-        req.tooling.allowed_native_tools = Some(vec!["Bash".to_owned()]);
+        req.tool_config.allowed_tools = Some(vec!["Bash".to_owned()]);
         let error = provider
             .execute_turn(req, events)
             .await
@@ -711,7 +710,7 @@ mod anthropic {
 #[cfg(feature = "api-openai")]
 mod openai {
     use super::*;
-    use odori_agents::provider::{Effort, Provider, TurnError};
+    use odori_agents::provider::{Provider, ReasoningEffort, TurnError};
     use odori_providers::{OpenAiConfig, OpenAiProvider};
 
     fn provider(base_url: &str) -> OpenAiProvider {
@@ -751,7 +750,7 @@ mod openai {
             },
         );
         req.directives.output_schema = Some(json!({"type": "object"}));
-        req.directives.effort = Some(Effort::Minimal);
+        req.directives.effort = Some(ReasoningEffort::Minimal);
         let outcome = provider.execute_turn(req, events).await.expect("turn");
 
         assert_eq!(outcome.text, "chained answer");
@@ -794,8 +793,8 @@ mod openai {
     }
 
     #[tokio::test]
-    async fn function_call_loop_executes_through_the_real_bridge() {
-        let (recording, attachment) = bridge_support::bridge_attachment().await;
+    async fn function_call_loop_executes_through_the_mcp_server() {
+        let (recording, mcp_config) = mcp_support::mcp_bootstrap().await;
         let mock = MockApi::start(vec![
             completed(
                 "resp_a",
@@ -809,8 +808,8 @@ mod openai {
         let provider = provider(&mock.url());
         let (events, _r) = sink();
         let mut req = request("deploy prod", SessionDirective::Start);
-        req.tooling.mcp_servers.push(attachment.mcp_server);
-        req.tooling.framework_tools = vec!["deploy".to_owned()];
+        req.tool_config.mcp_servers.push(mcp_config.mcp_server);
+        req.tool_config.framework_tool_names = vec!["deploy".to_owned()];
 
         let outcome = provider.execute_turn(req, events).await.expect("tool turn");
         assert_eq!(outcome.text, "deployed and reported");

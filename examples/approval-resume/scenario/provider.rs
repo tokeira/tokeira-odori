@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-    TurnTooling,
+    Provider, SessionDirective, ToolConfig, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    TurnRequest,
 };
 use odori_dev_support::endpoint;
 use serde_json::{Value, json};
@@ -29,13 +29,13 @@ impl Provider for ApprovalProvider {
         request: TurnRequest,
         events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
-        let (session_id, session_forked) = match (&request.session, request.identity.turn) {
+        let (session_id, session_forked) = match (&request.session, request.turn_id.turn) {
             (SessionDirective::Start, 0) => (SESSION_ID, false),
             (SessionDirective::ResumeForked { session_id }, 1) if session_id == SESSION_ID => {
                 (FORKED_SESSION_ID, true)
             }
             (directive, turn) => {
-                return Err(tooling(format!(
+                return Err(tool_config_error(format!(
                     "turn {turn} received unexpected session directive {directive:?}"
                 )));
             }
@@ -45,21 +45,22 @@ impl Provider for ApprovalProvider {
         });
         events.emit(TurnEvent::Liveness);
 
-        if request.identity.turn == 0 {
+        if request.turn_id.turn == 0 {
             return Ok(TurnOutcome::new(
                 session_id,
-                serde_json::to_string(&proposal()).map_err(tooling)?,
+                serde_json::to_string(&proposal()).map_err(tool_config_error)?,
             ));
         }
 
-        let decision: ApprovalDecision = serde_json::from_str(&request.input).map_err(tooling)?;
+        let decision: ApprovalDecision =
+            serde_json::from_str(&request.input).map_err(tool_config_error)?;
         if decision.decision != "approve" || decision.plan_hash != PLAN_HASH {
-            return Err(tooling(
+            return Err(tool_config_error(
                 "the restored turn did not carry the approved plan hash",
             ));
         }
         let apply = call_tool(
-            &request.tooling,
+            &request.tool_config,
             "apply_approved_patch",
             json!({
                 "plan_hash": decision.plan_hash,
@@ -71,7 +72,7 @@ impl Provider for ApprovalProvider {
         .await?;
         tool_success_text(&apply)?;
         let finish_bar = call_tool(
-            &request.tooling,
+            &request.tool_config,
             "finish_bar",
             json!({"plan_hash": PLAN_HASH}),
             "approval-resume-finish-bar",
@@ -87,24 +88,24 @@ impl Provider for ApprovalProvider {
                 finish_bar: vec!["cargo test --locked".to_owned()],
                 session_forked,
             })
-            .map_err(tooling)?,
+            .map_err(tool_config_error)?,
         ))
     }
 }
 
-fn tooling(error: impl std::fmt::Display) -> TurnError {
+fn tool_config_error(error: impl std::fmt::Display) -> TurnError {
     TurnError::Tooling {
         message: error.to_string(),
     }
 }
 
 async fn call_tool(
-    tooling_config: &TurnTooling,
+    tool_config: &ToolConfig,
     name: &str,
     arguments: Value,
     call_id: &str,
 ) -> Result<Value, TurnError> {
-    let (url, authorization) = endpoint(tooling_config)?;
+    let (url, authorization) = endpoint(tool_config)?;
     let body = reqwest::Client::new()
         .post(url)
         .header("Authorization", authorization)
@@ -120,16 +121,16 @@ async fn call_tool(
         }))
         .send()
         .await
-        .map_err(tooling)?
+        .map_err(tool_config_error)?
         .text()
         .await
-        .map_err(tooling)?;
+        .map_err(tool_config_error)?;
     let frame = body
         .lines()
         .filter_map(|line| line.strip_prefix("data: "))
         .next_back()
-        .ok_or_else(|| tooling("bridge returned no final SSE frame"))?;
-    serde_json::from_str(frame).map_err(tooling)
+        .ok_or_else(|| tool_config_error("mcp_server returned no final SSE frame"))?;
+    serde_json::from_str(frame).map_err(tool_config_error)
 }
 
 fn tool_success_text(frame: &Value) -> Result<String, TurnError> {
@@ -138,14 +139,16 @@ fn tool_success_text(frame: &Value) -> Result<String, TurnError> {
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        return Err(tooling(format!("durable tool refused the call: {frame}")));
+        return Err(tool_config_error(format!(
+            "durable tool refused the call: {frame}"
+        )));
     }
     if let Some(error) = frame.pointer("/error/message").and_then(Value::as_str) {
-        return Err(tooling(error));
+        return Err(tool_config_error(error));
     }
     frame
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| tooling(format!("tool response has no text result: {frame}")))
+        .ok_or_else(|| tool_config_error(format!("tool response has no text result: {frame}")))
 }

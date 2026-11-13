@@ -9,7 +9,7 @@ The bundled fixture starts with a failing `increment` test and a missing
 `double` feature. Every run copies that snapshot into fresh temporary worker and
 integration trees. The scripted providers make model choices deterministic;
 all durable behaviour is real: the embedded engine, child workflows, signals,
-workflow updates, HTTP MCP bridge, registry, activities, retries, and budgets.
+workflow updates, HTTP MCP tool server, registry, activities, retries, and budgets.
 
 Run the deterministic path:
 
@@ -34,7 +34,7 @@ The policies are code:
 - The plan and every apply receive separate signals. `apply_slice` also checks
   the per-item approval ledger, so a missing approval is a tool error.
 - Worker finish bars (`cargo check --locked` plus a targeted test) execute as
-  durable bridge activities. An item is eligible for review only after those
+  durable MCP tool server activities. An item is eligible for review only after those
   results exist in workflow history.
 - The `increment-bugfix` slice is authored by the Claude provider and reviewed
   by Codex; `double-feature` is authored by Codex and reviewed by Claude. Both
@@ -108,6 +108,6 @@ The example owns its complete implementation under `slice-fleet/scenario/`:
 - `provider.rs` scripts planning, work, hostile review, and approval behavior.
 - `agents.rs` assembles the agent, handoff, and budget graph.
 - `tools.rs` enforces scope, finish-bar, and per-item apply policies.
-- `bridge.rs` is the scripted harness's HTTP MCP client.
+- `MCP tool server.rs` is the scripted harness's HTTP MCP client.
 - `runtime.rs` owns embedded-engine startup and event observation.
 - `state.rs` records policy evidence; `workspace.rs` owns fixture copies.

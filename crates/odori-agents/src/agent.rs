@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::{
     guardrail::{Guardrail, RunBudget},
     handoff::Handoff,
-    provider::{AgentDirectives, Effort, TurnTooling},
+    provider::{AgentDirectives, ReasoningEffort, ToolConfig},
     tool::Tool,
 };
 
@@ -27,10 +27,10 @@ pub struct Agent {
     instructions: String,
     provider: Option<String>,
     model: Option<String>,
-    effort: Option<Effort>,
+    effort: Option<ReasoningEffort>,
     tools: Vec<Tool>,
     handoffs: Vec<Handoff>,
-    allowed_native_tools: Option<Vec<String>>,
+    allowed_tools: Option<Vec<String>>,
     input_guardrails: Vec<Arc<dyn Guardrail>>,
     output_guardrails: Vec<Arc<dyn Guardrail>>,
     output_schema: Option<Value>,
@@ -48,7 +48,7 @@ impl Agent {
             effort: None,
             tools: Vec::new(),
             handoffs: Vec::new(),
-            allowed_native_tools: None,
+            allowed_tools: None,
             input_guardrails: Vec::new(),
             output_guardrails: Vec::new(),
             output_schema: None,
@@ -71,9 +71,9 @@ impl Agent {
 
     /// Select a provider-neutral reasoning effort. Each provider maps the
     /// level onto its own lever or rejects it before spawn with a typed
-    /// configuration error ([`Effort`]'s contract); unset means the
+    /// configuration error ([`ReasoningEffort`]'s contract); unset means the
     /// backend's default.
-    pub fn with_effort(mut self, effort: Effort) -> Self {
+    pub fn with_effort(mut self, effort: ReasoningEffort) -> Self {
         self.effort = Some(effort);
         self
     }
@@ -91,13 +91,14 @@ impl Agent {
         self
     }
 
-    /// Scope the harness's native tooling (backend naming, e.g. headless
-    /// Claude Code `--allowedTools` values).
-    pub fn with_allowed_native_tools(
+    /// Configure allowed native and MCP tool names using backend naming
+    /// (Claude Code: `--allowedTools`). Enforcement is provider-specific;
+    /// the runner also adds names exposed by the MCP bootstrapper.
+    pub fn with_allowed_tools(
         mut self,
         tools: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
-        self.allowed_native_tools = Some(tools.into_iter().map(Into::into).collect());
+        self.allowed_tools = Some(tools.into_iter().map(Into::into).collect());
         self
     }
 
@@ -174,13 +175,13 @@ impl Agent {
         }
     }
 
-    /// The turn tooling derived from this agent's configuration. MCP
-    /// attachment (the bridge) is layered on by the caller; this carries
+    /// The tool configuration derived from this agent's configuration. MCP
+    /// bootstrap configuration is layered on by the caller; this carries
     /// the agent-declared parts.
-    pub fn tooling(&self) -> TurnTooling {
-        TurnTooling {
-            allowed_native_tools: self.allowed_native_tools.clone(),
-            framework_tools: self
+    pub fn tool_config(&self) -> ToolConfig {
+        ToolConfig {
+            allowed_tools: self.allowed_tools.clone(),
+            framework_tool_names: self
                 .tools
                 .iter()
                 .map(|tool| tool.name().to_owned())
@@ -190,7 +191,7 @@ impl Agent {
                         .map(|handoff| handoff.tool_name().to_owned()),
                 )
                 .collect(),
-            ..TurnTooling::default()
+            ..ToolConfig::default()
         }
     }
 }
@@ -266,21 +267,21 @@ mod tests {
         registry.register(
             Agent::new("helper", "assist")
                 .with_model("m1")
-                .with_effort(Effort::High)
+                .with_effort(ReasoningEffort::High)
                 .with_input_guardrail(NoPirates)
                 .with_handoff(Handoff::new("specialist"))
-                .with_allowed_native_tools(["Bash"]),
+                .with_allowed_tools(["Bash"]),
         );
         let agent = registry.get("helper").expect("registered");
         assert_eq!(agent.directives().model.as_deref(), Some("m1"));
-        assert_eq!(agent.directives().effort, Some(Effort::High));
+        assert_eq!(agent.directives().effort, Some(ReasoningEffort::High));
         assert_eq!(
-            agent.tooling().allowed_native_tools,
+            agent.tool_config().allowed_tools,
             Some(vec!["Bash".to_owned()])
         );
         assert_eq!(agent.input_guardrails().len(), 1);
         assert_eq!(
-            agent.tooling().framework_tools,
+            agent.tool_config().framework_tool_names,
             vec!["transfer_to_specialist".to_owned()]
         );
         assert!(registry.get("missing").is_err());

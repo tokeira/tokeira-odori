@@ -1,4 +1,4 @@
-//! Quota-gated Codex proof through the real embedded engine and HTTP MCP bridge.
+//! Quota-gated Codex proof through the real embedded engine and HTTP MCP tool server.
 //!
 //! This also records the call identity Codex presents after a real MCP timeout.
 //! Run explicitly with an authenticated pinned Codex CLI:
@@ -16,10 +16,10 @@ use std::{
 };
 
 use anyhow::Result;
-use odori_agents::{Agent, AgentRegistry, Providers, RunConfig, Tool};
+use odori_agents::{Agent, AgentRegistry, ProviderRegistry, RunConfig, Tool};
 use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 use odori_providers::CodexProvider;
 use serde_json::json;
 
@@ -67,14 +67,14 @@ async fn live_codex_timeout_retry_executes_durably_with_fresh_identity() -> Resu
 
     let provider = Arc::new(CodexProvider::new());
     let (engine, _g1, _g2) = start_engine().await?;
-    let mut bridge_config = BridgeConfig::default();
-    bridge_config.keepalive = Duration::from_millis(250);
-    bridge_config.mcp_timeout_pin = Some(Duration::from_secs(1));
+    let mut mcp_server_config = McpToolServerConfig::default();
+    mcp_server_config.keepalive = Duration::from_millis(250);
+    mcp_server_config.mcp_timeout_pin = Some(Duration::from_secs(1));
     let runtime = OdoriRuntime::builder("tq-live-codex-bridge")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider))
-        .bridge(bridge_config)
+        .providers(ProviderRegistry::new(provider))
+        .mcp_server(mcp_server_config)
         .start()
         .await?;
 
@@ -97,7 +97,7 @@ async fn live_codex_timeout_retry_executes_durably_with_fresh_identity() -> Resu
     assert_eq!(
         executions.load(Ordering::SeqCst),
         2,
-        "a fresh retry identity should execute as a second durable invocation"
+        "a fresh retry tool_call_id should execute as a second durable tool_call"
     );
     assert_eq!(observed_ids.len(), 2);
     assert_ne!(

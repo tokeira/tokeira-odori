@@ -8,7 +8,7 @@
 //! the terminal `result` event, **drain to EOF** (the result is not always
 //! the last line), join the exit, and classify by the 4-tuple —
 //! (exit code, result-event-arrived, terminal reason, stderr) — extended
-//! with *died awaiting MCP*: bridge `tool_use` events with no answering
+//! with *died awaiting MCP*: MCP tool server `tool_use` events with no answering
 //! `tool_result` at death.
 //!
 //! Session semantics: `Start` spawns fresh; `Resume` passes `--resume`;
@@ -32,8 +32,8 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Effort, Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent, TurnEventSink,
-    TurnOutcome, TurnRequest, TurnUsage,
+    Provider, ProviderLimitStatus, ReasoningEffort, SessionDirective, TurnError, TurnEvent,
+    TurnEventSink, TurnOutcome, TurnRequest, TurnUsage,
 };
 use serde_json::Value;
 use tokio::{
@@ -42,7 +42,7 @@ use tokio::{
     sync::OnceCell,
 };
 
-use crate::claude_flags::render_tooling;
+use crate::claude_flags::render_tool_args;
 use events::{ContentBlock, RateLimitInfo, ResultEvent, StreamEvent, UserBlock};
 
 /// The Claude Code version this provider is conformance-tested against.
@@ -203,9 +203,9 @@ impl ClaudeProvider {
         if let Some(schema) = &request.directives.output_schema {
             cmd.arg("--json-schema").arg(claude_schema(schema)?);
         }
-        let tooling = render_tooling(&request.tooling);
-        cmd.args(&tooling.args);
-        for (name, value) in &tooling.env {
+        let tool_args = render_tool_args(&request.tool_config);
+        cmd.args(&tool_args.args);
+        for (name, value) in &tool_args.env {
             cmd.env(name, value);
         }
         for var in SCRUBBED_ENV {
@@ -228,18 +228,20 @@ impl ClaudeProvider {
 /// neither a `none` nor a `minimal` tier, and a level the harness would
 /// reject is a configuration error **before** any process spawns, never
 /// a misclassified harness death.
-fn claude_effort(effort: Effort) -> Result<&'static str, TurnError> {
+fn claude_effort(effort: ReasoningEffort) -> Result<&'static str, TurnError> {
     match effort {
-        Effort::None | Effort::Minimal => Err(TurnError::Config {
+        ReasoningEffort::None | ReasoningEffort::Minimal => Err(TurnError::Config {
             message: format!(
                 "the Claude Code harness (pinned {PINNED_VERSION}) has no `{effort}` effort \
                  tier; its `--effort` accepts low, medium, high, xhigh, or max — configure \
-                 the agent with Effort::Low or leave effort unset for the harness default"
+                 the agent with ReasoningEffort::Low or leave effort unset for the harness default"
             ),
         }),
-        Effort::Low | Effort::Medium | Effort::High | Effort::XHigh | Effort::Max => {
-            Ok(effort.as_str())
-        }
+        ReasoningEffort::Low
+        | ReasoningEffort::Medium
+        | ReasoningEffort::High
+        | ReasoningEffort::XHigh
+        | ReasoningEffort::Max => Ok(effort.as_str()),
     }
 }
 
@@ -307,12 +309,12 @@ impl Provider for ClaudeProvider {
             captured
         });
 
-        // Stream state: the terminal result, the session id, and the bridge
+        // Stream state: the terminal result, the session id, and the MCP tool server
         // tool calls still awaiting their `tool_result` (for the
         // died-awaiting-MCP classification).
         let mut terminal: Option<ResultEvent> = None;
         let mut session_id: Option<String> = None;
-        let mut pending_bridge_calls: HashSet<String> = HashSet::new();
+        let mut pending_mcp_calls: HashSet<String> = HashSet::new();
         let mut lines = BufReader::new(stdout).lines();
         let timed_out = loop {
             let remaining = deadline.saturating_sub(started.elapsed());
@@ -348,7 +350,7 @@ impl Provider for ClaudeProvider {
                     for block in assistant.message.content {
                         if let ContentBlock::ToolUse { id, name } = block {
                             if name.starts_with("mcp__") {
-                                pending_bridge_calls.insert(id);
+                                pending_mcp_calls.insert(id);
                             }
                             events.emit(TurnEvent::ToolUse { name });
                         }
@@ -358,7 +360,7 @@ impl Provider for ClaudeProvider {
                     if let Some(message) = user.message {
                         for block in message.content {
                             if let UserBlock::ToolResult { tool_use_id } = block {
-                                pending_bridge_calls.remove(&tool_use_id);
+                                pending_mcp_calls.remove(&tool_use_id);
                             }
                         }
                     }
@@ -397,7 +399,7 @@ impl Provider for ClaudeProvider {
             status.code(),
             session_id,
             stderr_head,
-            pending_bridge_calls,
+            pending_mcp_calls,
         )
     }
 }
@@ -411,14 +413,14 @@ fn classify(
     exit_code: Option<i32>,
     session_id: Option<String>,
     stderr_head: String,
-    pending_bridge_calls: HashSet<String>,
+    pending_mcp_calls: HashSet<String>,
 ) -> Result<TurnOutcome, TurnError> {
     let Some(result) = terminal else {
         // No terminal result: the harness died (or was killed by a signal).
-        // Died-awaiting-MCP is its own class — the bridge's in-flight
+        // Died-awaiting-MCP is its own class — the MCP tool server's in-flight
         // executions run to completion and the resumed replay dedupes.
-        if !pending_bridge_calls.is_empty() {
-            let mut pending: Vec<String> = pending_bridge_calls.into_iter().collect();
+        if !pending_mcp_calls.is_empty() {
+            let mut pending: Vec<String> = pending_mcp_calls.into_iter().collect();
             pending.sort();
             return Err(TurnError::HarnessDiedAwaitingTools {
                 exit_code,
@@ -434,7 +436,7 @@ fn classify(
             || stderr_head.contains("--json-schema is not a valid JSON Schema")
         {
             return Err(TurnError::Config {
-                message: format!("the harness rejected its invocation: {stderr_head}"),
+                message: format!("the harness rejected its tool_call: {stderr_head}"),
             });
         }
         return Err(TurnError::HarnessDied {
@@ -591,16 +593,16 @@ fn missing_harness(binary: &std::path::Path, error: &std::io::Error) -> TurnErro
 
 #[cfg(test)]
 mod tests {
-    use odori_agents::provider::{AgentDirectives, SessionDirective, TurnIdentity};
+    use odori_agents::provider::{AgentDirectives, SessionDirective, TurnId};
     use proptest::prelude::*;
 
     use super::*;
 
-    // Feature: mcp-bridge, Property 6: failure classes are preserved
+    // failure classes are preserved
     // (provider leg; the tool- and bridge-failure legs are proven in the
     // O6 suites). For any synthetic exit shape — result-event presence,
     // error flags, reason text, API status, exit code, stderr, pending
-    // bridge calls — classification lands in exactly the taxonomy's class
+    // MCP tool server calls — classification lands in exactly the taxonomy's class
     // for that shape, never a neighbour's.
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
@@ -685,9 +687,9 @@ mod tests {
     fn effort_levels_render_to_the_pinned_flag_or_fail_typed() {
         let provider = ClaudeProvider::new();
         let mut directives = AgentDirectives::new("a", "i");
-        directives.effort = Some(Effort::XHigh);
+        directives.effort = Some(ReasoningEffort::XHigh);
         let request = TurnRequest::new(
-            TurnIdentity {
+            TurnId {
                 run_id: "r".into(),
                 turn: 0,
                 attempt: 1,
@@ -711,7 +713,7 @@ mod tests {
         // The pin has no minimal tier: a typed configuration error before
         // any spawn, naming the supported levels.
         let mut minimal = TurnRequest::new(
-            TurnIdentity {
+            TurnId {
                 run_id: "r".into(),
                 turn: 0,
                 attempt: 1,
@@ -720,7 +722,7 @@ mod tests {
             "hello",
             SessionDirective::Start,
         );
-        minimal.directives.effort = Some(Effort::Minimal);
+        minimal.directives.effort = Some(ReasoningEffort::Minimal);
         match provider.build_command(&minimal) {
             Err(TurnError::Config { message }) => {
                 assert!(message.contains("minimal") && message.contains(PINNED_VERSION));
@@ -728,7 +730,7 @@ mod tests {
             other => panic!("expected a typed configuration error, got {other:?}"),
         }
         let mut none = TurnRequest::new(
-            TurnIdentity {
+            TurnId {
                 run_id: "r".into(),
                 turn: 0,
                 attempt: 1,
@@ -737,7 +739,7 @@ mod tests {
             "hello",
             SessionDirective::Start,
         );
-        none.directives.effort = Some(Effort::None);
+        none.directives.effort = Some(ReasoningEffort::None);
         match provider.build_command(&none) {
             Err(TurnError::Config { message }) => {
                 assert!(message.contains("none") && message.contains(PINNED_VERSION));
@@ -747,7 +749,7 @@ mod tests {
 
         // Unset effort renders no flag at all.
         let unset = TurnRequest::new(
-            TurnIdentity {
+            TurnId {
                 run_id: "r".into(),
                 turn: 0,
                 attempt: 1,
@@ -771,7 +773,7 @@ mod tests {
             let mut directives = AgentDirectives::new("a", "i");
             directives.output_schema = Some(schema);
             TurnRequest::new(
-                TurnIdentity {
+                TurnId {
                     run_id: "r".into(),
                     turn: 0,
                     attempt: 1,
@@ -873,7 +875,7 @@ mod tests {
     fn vendor_transport_env_is_scrubbed_at_spawn() {
         let provider = ClaudeProvider::new();
         let request = TurnRequest::new(
-            TurnIdentity {
+            TurnId {
                 run_id: "r".into(),
                 turn: 0,
                 attempt: 1,

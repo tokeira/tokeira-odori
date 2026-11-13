@@ -7,16 +7,16 @@
 //!
 //! One turn = one activity: `execute_turn` runs the provider's internal
 //! completion-and-tool loop to quiescence, streaming chunks as heartbeats.
-//! Tools execute **through the mcp-bridge attachment**, exactly like the
+//! Tools execute **through the MCP tool server**, exactly like the
 //! harness tier: each model-requested call POSTs `tools/call` with the
 //! API's tool-use id as the call id, flowing through the registry /
-//! dedupe / `execute_tool` path. Tools present with no bridge attached is
+//! dedupe / `execute_tool` path. Tools present with no MCP tool server attached is
 //! a configuration error at spawn, never a silent toolless run.
 //!
 //! ## v0 posture (statements, not TODOs)
 //!
 //! - **Whole-loop retry re-issues model calls**: a retried turn re-spends
-//!   tokens on the model requests; tool results replay from the bridge's
+//!   tokens on the model requests; tool results replay from the MCP tool server's
 //!   registry, so tool side effects do not repeat.
 //! - **Multi-turn conversations are continuity-within-process** for the
 //!   Anthropic tier (no server-side conversation store); the OpenAI tier
@@ -30,7 +30,7 @@ pub mod openai;
 
 use std::time::Duration;
 
-use odori_agents::provider::{McpTransport, TurnError, TurnEvent, TurnEventSink, TurnTooling};
+use odori_agents::provider::{McpTransport, ToolConfig, TurnError, TurnEvent, TurnEventSink};
 use serde_json::{Value, json};
 
 /// Read a provider's API key from its environment variable, with the
@@ -149,17 +149,17 @@ pub(crate) async fn read_sse(
     Ok(())
 }
 
-/// The bridge attachment as the API tier's tool path.
+/// The MCP access configuration as the API tier's tool path.
 #[derive(Debug, Clone)]
-pub(crate) struct BridgeTools {
+pub(crate) struct McpToolClient {
     url: String,
     headers: Vec<(String, String)>,
     http: reqwest::Client,
 }
 
-/// One tool the bridge advertises.
+/// One tool the MCP tool server advertises.
 #[derive(Debug, Clone)]
-pub(crate) struct BridgeTool {
+pub(crate) struct McpToolDefinition {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) schema: Value,
@@ -167,19 +167,18 @@ pub(crate) struct BridgeTool {
 
 /// The outcome of one bridged call, model-facing.
 #[derive(Debug, Clone)]
-pub(crate) struct BridgeCallResult {
+pub(crate) struct McpToolCallResult {
     pub(crate) text: String,
     pub(crate) is_error: bool,
 }
 
-impl BridgeTools {
-    /// Resolve the tier's tool posture from the turn's tooling (operator
-    /// ruling): native-tool scoping is impossible here; framework tools
-    /// without a bridge attachment is a configuration error; a bridge
-    /// attachment yields the tool path.
-    pub(crate) fn resolve(tooling: &TurnTooling) -> Result<Option<Self>, TurnError> {
-        if tooling
-            .allowed_native_tools
+impl McpToolClient {
+    /// Resolve MCP tool access from the turn's tool configuration. API providers
+    /// reject harness tool allowlists and require MCP configuration when the
+    /// agent declares framework tools.
+    pub(crate) fn resolve(tool_config: &ToolConfig) -> Result<Option<Self>, TurnError> {
+        if tool_config
+            .allowed_tools
             .as_ref()
             .is_some_and(|tools| !tools.is_empty())
         {
@@ -190,24 +189,24 @@ impl BridgeTools {
                     .to_owned(),
             });
         }
-        let Some(server) = tooling.mcp_servers.first() else {
-            if tooling.framework_tools.is_empty() {
+        let Some(server) = tool_config.mcp_servers.first() else {
+            if tool_config.framework_tool_names.is_empty() {
                 return Ok(None);
             }
             return Err(TurnError::Config {
                 message: format!(
-                    "the agent declares framework tools ({}) but no mcp-bridge attachment \
+                    "the agent declares framework tools ({}) but no MCP configuration \
                      reached this turn: API-backed providers execute tools only through \
-                     the bridge — enable the `preview` feature (odori/preview) and \
-                     configure the runtime's bridge",
-                    tooling.framework_tools.join(", ")
+                     the MCP tool server — enable the `preview` feature (odori/preview) and \
+                     configure the runtime's MCP tool server",
+                    tool_config.framework_tool_names.join(", ")
                 ),
             });
         };
         let McpTransport::Http { url, headers } = &server.transport else {
             return Err(TurnError::Config {
-                message: "the API tier consumes the bridge over HTTP; a stdio MCP \
-                          attachment cannot be dialed from an in-process client"
+                message: "the API tier consumes MCP tools over HTTP; a stdio MCP \
+                          server cannot be dialed from an in-process client"
                     .to_owned(),
             });
         };
@@ -232,10 +231,10 @@ impl BridgeTools {
             .send()
             .await
             .map_err(|error| TurnError::Tooling {
-                message: format!("bridge unreachable: {error}"),
+                message: format!("MCP tool server unreachable: {error}"),
             })?;
         let text = response.text().await.map_err(|error| TurnError::Tooling {
-            message: format!("bridge response unreadable: {error}"),
+            message: format!("MCP tool server response unreadable: {error}"),
         })?;
         // Plain JSON or an SSE stream whose final frame is the response.
         let frame = text
@@ -244,12 +243,12 @@ impl BridgeTools {
             .next_back()
             .unwrap_or(&text);
         serde_json::from_str(frame).map_err(|error| TurnError::Tooling {
-            message: format!("bridge frame unparsable: {error}"),
+            message: format!("MCP tool server frame unparsable: {error}"),
         })
     }
 
-    /// The bridge's tool catalogue for this turn.
-    pub(crate) async fn list(&self) -> Result<Vec<BridgeTool>, TurnError> {
+    /// The MCP tool server's tool catalogue for this turn.
+    pub(crate) async fn list(&self) -> Result<Vec<McpToolDefinition>, TurnError> {
         let reply = self
             .rpc(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
             .await?;
@@ -260,7 +259,7 @@ impl BridgeTools {
             .unwrap_or_default();
         Ok(tools
             .into_iter()
-            .map(|tool| BridgeTool {
+            .map(|tool| McpToolDefinition {
                 name: tool
                     .get("name")
                     .and_then(Value::as_str)
@@ -276,14 +275,14 @@ impl BridgeTools {
             .collect())
     }
 
-    /// Execute one model-requested call durably through the bridge; the
+    /// Execute one model-requested call durably through the MCP tool server; the
     /// API's tool-use id is the call id the registry dedupes by.
     pub(crate) async fn call(
         &self,
         tool: &str,
         call_id: &str,
         arguments: &Value,
-    ) -> Result<BridgeCallResult, TurnError> {
+    ) -> Result<McpToolCallResult, TurnError> {
         let reply = self
             .rpc(json!({
                 "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -297,7 +296,7 @@ impl BridgeTools {
         if let Some(error) = reply.get("error") {
             return Err(TurnError::Tooling {
                 message: format!(
-                    "bridge rejected the call to {tool:?}: {}",
+                    "MCP tool server rejected the call to {tool:?}: {}",
                     error.get("message").and_then(Value::as_str).unwrap_or("?")
                 ),
             });
@@ -311,7 +310,7 @@ impl BridgeTools {
             .pointer("/result/isError")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        Ok(BridgeCallResult { text, is_error })
+        Ok(McpToolCallResult { text, is_error })
     }
 }
 

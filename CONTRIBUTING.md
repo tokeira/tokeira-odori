@@ -10,7 +10,7 @@ semantics can be agreed first.
   and AI contributors. It defines the frozen provider boundary, documentation
   standard, dependency discipline, and concurrent-agent Git protocol.
 - Changes to durable behaviour are spec-driven. Read the relevant material in
-  [`.kiro/specs`](.kiro/specs) before changing a workflow, activity, bridge, or
+  [`.kiro/specs`](.kiro/specs) before changing a workflow, activity, MCP tool server, or
   provider contract.
 - The provider trait is frozen. If it cannot express a provider requirement,
   stop and raise the gap instead of reshaping it as part of another change.

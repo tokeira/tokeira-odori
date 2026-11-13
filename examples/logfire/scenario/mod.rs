@@ -11,14 +11,15 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use odori::{
-    Agent, AgentRegistry, EmbeddedEngineConfig, Engine, Providers, RunOutput, TokeiraConfig, Tool,
+    Agent, AgentRegistry, EmbeddedEngineConfig, Engine, ProviderRegistry, RunOutput, TokeiraConfig,
+    Tool,
     agents::provider::{
-        McpTransport, Provider, TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest,
-        TurnTooling, TurnUsage,
+        McpTransport, Provider, ToolConfig, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+        TurnRequest, TurnUsage,
     },
 };
 use odori_engine::{ConnectTarget, EmbeddedStorageConfig, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 use serde_json::{Value, json};
 
 /// What one scripted conversation produced, for verification.
@@ -41,7 +42,7 @@ fn scripted_usage(turn: u32) -> TurnUsage {
     usage
 }
 
-fn tooling_error(error: impl std::fmt::Display) -> TurnError {
+fn tool_config_error(error: impl std::fmt::Display) -> TurnError {
     TurnError::Tooling {
         message: error.to_string(),
     }
@@ -65,20 +66,20 @@ impl Provider for ScriptedProvider {
         request: TurnRequest,
         events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
-        let turn = request.identity.turn;
+        let turn = request.turn_id.turn;
         let session_id = format!("logfire-session-{turn}");
         events.emit(TurnEvent::SessionStarted {
             session_id: session_id.clone(),
         });
 
         let text = if turn == 0 {
-            // Turn 0: the "model" records a note through the durable bridge
+            // Turn 0: the "model" records a note through the durable MCP tool server
             // tool before answering.
             events.emit(TurnEvent::ToolUse {
                 name: "save_note".to_owned(),
             });
-            let receipt = call_bridge_tool(
-                &request.tooling,
+            let receipt = call_mcp_tool(
+                &request.tool_config,
                 "save_note",
                 json!({"text": "pack the telescope"}),
                 "logfire-call-0",
@@ -97,25 +98,27 @@ impl Provider for ScriptedProvider {
 }
 
 /// The scripted harness's minimal HTTP MCP client (the same wire shape a
-/// real harness uses against the bridge attachment).
-async fn call_bridge_tool(
-    tooling: &TurnTooling,
+/// real harness uses against the MCP access configuration).
+async fn call_mcp_tool(
+    tool_config: &ToolConfig,
     name: &str,
     arguments: Value,
     call_id: &str,
 ) -> Result<String, TurnError> {
-    let server = tooling
+    let server = tool_config
         .mcp_servers
         .first()
-        .ok_or_else(|| tooling_error("the durable bridge was not attached"))?;
+        .ok_or_else(|| tool_config_error("the MCP tool server was not attached"))?;
     let McpTransport::Http { url, headers } = &server.transport else {
-        return Err(tooling_error("the example requires the HTTP bridge"));
+        return Err(tool_config_error(
+            "the example requires the HTTP mcp_server",
+        ));
     };
     let authorization = headers
         .iter()
         .find(|(header, _)| header.eq_ignore_ascii_case("authorization"))
         .map(|(_, value)| value.clone())
-        .ok_or_else(|| tooling_error("bridge attachment omitted authorization"))?;
+        .ok_or_else(|| tool_config_error("MCP configuration omitted authorization"))?;
     let body = reqwest::Client::new()
         .post(url)
         .header("Authorization", authorization)
@@ -131,24 +134,24 @@ async fn call_bridge_tool(
         }))
         .send()
         .await
-        .map_err(tooling_error)?
+        .map_err(tool_config_error)?
         .text()
         .await
-        .map_err(tooling_error)?;
+        .map_err(tool_config_error)?;
     let frame = body
         .lines()
         .filter_map(|line| line.strip_prefix("data: "))
         .next_back()
-        .ok_or_else(|| tooling_error("bridge returned no final SSE frame"))?;
-    let frame: Value = serde_json::from_str(frame).map_err(tooling_error)?;
+        .ok_or_else(|| tool_config_error("mcp_server returned no final SSE frame"))?;
+    let frame: Value = serde_json::from_str(frame).map_err(tool_config_error)?;
     if let Some(message) = frame.pointer("/error/message").and_then(Value::as_str) {
-        return Err(tooling_error(message));
+        return Err(tool_config_error(message));
     }
     frame
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| tooling_error(format!("tool response has no text result: {frame}")))
+        .ok_or_else(|| tool_config_error(format!("tool response has no text result: {frame}")))
 }
 
 fn agents(notes: Arc<Mutex<Vec<String>>>) -> AgentRegistry {
@@ -212,8 +215,8 @@ pub async fn run_scripted_conversation(storage: EmbeddedStorageConfig) -> Result
     let runtime = OdoriRuntime::builder("example-logfire")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(agents(notes.clone()))
-        .providers(Providers::new(Arc::new(ScriptedProvider)))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(Arc::new(ScriptedProvider)))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await?;
 

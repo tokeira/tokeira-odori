@@ -1,5 +1,5 @@
 //! Unit tests for the MCP server's contract-policy and error-table rows
-//! (mcp-bridge spec): auth gate, unserved surfaces, notification handling,
+//! : auth gate, unserved surfaces, notification handling,
 //! tools/list content. Uses a raw HTTP/1.1 client over loopback — no
 //! client-side dependencies.
 #![cfg(feature = "preview")]
@@ -12,10 +12,12 @@ use std::sync::{
 use async_trait::async_trait;
 use odori_agents::{
     Agent, AgentRegistry, Handoff, Tool, ToolCallResult,
-    provider::{AttachmentSource, McpTransport, TurnIdentity},
-    run::{InvocationRejection, ToolInvocation, ToolInvocationReply},
+    provider::{McpBootstrapper, McpTransport, TurnId},
+    run::{ToolCallRejection, ToolCallReply, ToolCallRequest},
 };
-use odori_mcp_bridge::{Bridge, BridgeConfig, BridgeError, UpdateClient};
+use odori_mcp_bridge::{
+    McpToolServer, McpToolServerConfig, McpToolServerError, ToolCallDispatcher,
+};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -23,21 +25,19 @@ use tokio::{
 };
 
 #[derive(Debug)]
-struct EchoUpdateClient;
+struct EchoToolCallDispatcher;
 
 #[async_trait]
-impl UpdateClient for EchoUpdateClient {
-    async fn tool_invoked(
+impl ToolCallDispatcher for EchoToolCallDispatcher {
+    async fn dispatch(
         &self,
         _workflow_id: &str,
-        invocation: ToolInvocation,
-    ) -> Result<ToolInvocationReply, BridgeError> {
-        Ok(ToolInvocationReply::Completed(ToolCallResult::text(
-            format!(
-                "ran {} for {}",
-                invocation.tool, invocation.identity.call_id
-            ),
-        )))
+        tool_call: ToolCallRequest,
+    ) -> Result<ToolCallReply, McpToolServerError> {
+        Ok(ToolCallReply::Completed(ToolCallResult::text(format!(
+            "ran {} for {}",
+            tool_call.tool, tool_call.tool_call_id.call_id
+        ))))
     }
 }
 
@@ -48,20 +48,20 @@ struct FencingLifecycleClient {
 }
 
 #[async_trait]
-impl UpdateClient for FencingLifecycleClient {
-    async fn tool_invoked(
+impl ToolCallDispatcher for FencingLifecycleClient {
+    async fn dispatch(
         &self,
         _workflow_id: &str,
-        invocation: ToolInvocation,
-    ) -> Result<ToolInvocationReply, BridgeError> {
+        tool_call: ToolCallRequest,
+    ) -> Result<ToolCallReply, McpToolServerError> {
         let latest = self
             .latest_attempt
-            .fetch_max(invocation.identity.attempt, Ordering::SeqCst);
-        if invocation.identity.attempt < latest {
-            return Ok(ToolInvocationReply::Rejected(InvocationRejection::Fenced));
+            .fetch_max(tool_call.tool_call_id.attempt, Ordering::SeqCst);
+        if tool_call.tool_call_id.attempt < latest {
+            return Ok(ToolCallReply::Rejected(ToolCallRejection::Fenced));
         }
-        Ok(ToolInvocationReply::Completed(ToolCallResult::text(
-            invocation.identity.call_id,
+        Ok(ToolCallReply::Completed(ToolCallResult::text(
+            tool_call.tool_call_id.call_id,
         )))
     }
 
@@ -74,7 +74,7 @@ async fn http_post(url: &str, auth: Option<&str>, body: &Value) -> (u16, String)
     let address = url
         .strip_prefix("http://")
         .and_then(|rest| rest.split_once('/'))
-        .expect("bridge url shape")
+        .expect("mcp_server url shape")
         .0
         .to_owned();
     let payload = body.to_string();
@@ -103,7 +103,7 @@ async fn http_post(url: &str, auth: Option<&str>, body: &Value) -> (u16, String)
     (status, body)
 }
 
-async fn bridge_with_token() -> (Bridge, String) {
+async fn mcp_server_with_token() -> (McpToolServer, String) {
     let mut registry = AgentRegistry::new();
     registry.register(
         Agent::new("ops", "operate")
@@ -116,17 +116,17 @@ async fn bridge_with_token() -> (Bridge, String) {
             .with_handoff(Handoff::new("specialist")),
     );
     registry.register(Agent::new("specialist", "specialize"));
-    let bridge = Bridge::start(
+    let mcp_server = McpToolServer::start(
         Arc::new(registry),
-        Arc::new(EchoUpdateClient),
-        BridgeConfig::default(),
+        Arc::new(EchoToolCallDispatcher),
+        McpToolServerConfig::default(),
     )
     .await
-    .expect("bridge start");
-    let attachment = bridge
-        .attachment_for(
+    .expect("start MCP tool server");
+    let mcp_config = mcp_server
+        .bootstrap_mcp(
             "wf-1",
-            &TurnIdentity {
+            &TurnId {
                 run_id: "r".into(),
                 turn: 0,
                 attempt: 1,
@@ -134,12 +134,15 @@ async fn bridge_with_token() -> (Bridge, String) {
             "ops",
         )
         .expect("agent has tools");
-    (bridge, attachment_token(&attachment.mcp_server.transport))
+    (
+        mcp_server,
+        mcp_config_token(&mcp_config.mcp_server.transport),
+    )
 }
 
-fn attachment_token(transport: &McpTransport) -> String {
+fn mcp_config_token(transport: &McpTransport) -> String {
     let McpTransport::Http { headers, .. } = transport else {
-        panic!("bridge attachment must be HTTP");
+        panic!("MCP configuration must use HTTP");
     };
     headers[0]
         .1
@@ -150,16 +153,16 @@ fn attachment_token(transport: &McpTransport) -> String {
 
 #[tokio::test]
 async fn missing_token_is_rejected_before_processing() {
-    let (bridge, _token) = bridge_with_token().await;
+    let (mcp_server, _token) = mcp_server_with_token().await;
     let (status, _) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         None,
         &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
     )
     .await;
     assert_eq!(status, 401);
     let (status, _) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some("not-a-real-token"),
         &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
     )
@@ -169,10 +172,10 @@ async fn missing_token_is_rejected_before_processing() {
 
 #[tokio::test]
 async fn unserved_surfaces_return_method_not_found() {
-    let (bridge, token) = bridge_with_token().await;
+    let (mcp_server, token) = mcp_server_with_token().await;
     for method in ["resources/list", "prompts/list", "completion/complete"] {
         let (status, body) = http_post(
-            bridge.url(),
+            mcp_server.url(),
             Some(&token),
             &json!({"jsonrpc": "2.0", "id": 1, "method": method}),
         )
@@ -188,9 +191,9 @@ async fn unserved_surfaces_return_method_not_found() {
 
 #[tokio::test]
 async fn notifications_are_accepted_without_reply() {
-    let (bridge, token) = bridge_with_token().await;
+    let (mcp_server, token) = mcp_server_with_token().await;
     let (status, body) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&token),
         &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
     )
@@ -201,9 +204,9 @@ async fn notifications_are_accepted_without_reply() {
 
 #[tokio::test]
 async fn initialize_ping_and_tools_list_answer_plain() {
-    let (bridge, token) = bridge_with_token().await;
+    let (mcp_server, token) = mcp_server_with_token().await;
     let (status, body) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&token),
         &json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}),
@@ -219,7 +222,7 @@ async fn initialize_ping_and_tools_list_answer_plain() {
     );
 
     let (_, body) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&token),
         &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
     )
@@ -247,9 +250,9 @@ async fn initialize_ping_and_tools_list_answer_plain() {
 
 #[tokio::test]
 async fn tools_call_streams_result_with_harness_call_id() {
-    let (bridge, token) = bridge_with_token().await;
+    let (mcp_server, token) = mcp_server_with_token().await;
     let (status, body) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&token),
         &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "deploy", "arguments": {},
@@ -259,7 +262,7 @@ async fn tools_call_streams_result_with_harness_call_id() {
     assert_eq!(status, 200);
     // SSE frames: the final one carries the JSON-RPC response with the
     // update's result — proving the harness call id crossed into the
-    // invocation identity.
+    // tool call identity.
     let last = body
         .lines()
         .filter_map(|line| line.strip_prefix("data: "))
@@ -275,9 +278,9 @@ async fn tools_call_streams_result_with_harness_call_id() {
 
 #[tokio::test]
 async fn tools_call_accepts_codex_call_id() {
-    let (bridge, token) = bridge_with_token().await;
+    let (mcp_server, token) = mcp_server_with_token().await;
     let (status, body) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&token),
         &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "deploy", "arguments": {},
@@ -309,39 +312,43 @@ async fn live_run_stale_token_is_fenced_then_terminal_run_tokens_are_evicted() {
         |_context, _args| async { Ok(json!("unused")) },
     )));
     let client = Arc::new(FencingLifecycleClient::default());
-    let bridge = Bridge::start(Arc::new(registry), client.clone(), BridgeConfig::default())
-        .await
-        .expect("bridge start");
-    let attempt_one = bridge
-        .attachment_for(
+    let mcp_server = McpToolServer::start(
+        Arc::new(registry),
+        client.clone(),
+        McpToolServerConfig::default(),
+    )
+    .await
+    .expect("start MCP tool server");
+    let attempt_one = mcp_server
+        .bootstrap_mcp(
             "wf-evict",
-            &TurnIdentity {
+            &TurnId {
                 run_id: "run-evict".into(),
                 turn: 0,
                 attempt: 1,
             },
             "ops",
         )
-        .expect("attempt one attachment");
-    let attempt_two = bridge
-        .attachment_for(
+        .expect("attempt one mcp_config");
+    let attempt_two = mcp_server
+        .bootstrap_mcp(
             "wf-evict",
-            &TurnIdentity {
+            &TurnId {
                 run_id: "run-evict".into(),
                 turn: 0,
                 attempt: 2,
             },
             "ops",
         )
-        .expect("attempt two attachment");
-    let stale_token = attachment_token(&attempt_one.mcp_server.transport);
-    let current_token = attachment_token(&attempt_two.mcp_server.transport);
+        .expect("attempt two mcp_config");
+    let stale_token = mcp_config_token(&attempt_one.mcp_server.transport);
+    let current_token = mcp_config_token(&attempt_two.mcp_server.transport);
 
     // Present the current attempt first, then a fresh call through the stale
     // attachment. While the workflow is live the stale token still passes
     // authentication and reaches fencing — it must never collapse to 401.
     let (status, _) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&current_token),
         &json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                 "params": {"name": "deploy", "arguments": {},
@@ -350,7 +357,7 @@ async fn live_run_stale_token_is_fenced_then_terminal_run_tokens_are_evicted() {
     .await;
     assert_eq!(status, 200);
     let (status, body) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&stale_token),
         &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                 "params": {"name": "deploy", "arguments": {},
@@ -374,7 +381,7 @@ async fn live_run_stale_token_is_fenced_then_terminal_run_tokens_are_evicted() {
     let mut stale_status = status;
     for _ in 0..50 {
         (stale_status, _) = http_post(
-            bridge.url(),
+            mcp_server.url(),
             Some(&stale_token),
             &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}),
         )
@@ -386,7 +393,7 @@ async fn live_run_stale_token_is_fenced_then_terminal_run_tokens_are_evicted() {
     }
     assert_eq!(stale_status, 401, "terminal run token was not evicted");
     let (current_status, _) = http_post(
-        bridge.url(),
+        mcp_server.url(),
         Some(&current_token),
         &json!({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}),
     )

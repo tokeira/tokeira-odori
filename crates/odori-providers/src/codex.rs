@@ -8,7 +8,7 @@
 //! and MCP conformance baseline.
 //!
 //! Codex's MCP tool timeout is a fixed wall-clock ceiling at this pin: progress
-//! notifications do not extend it. Set [`TurnTooling::mcp_timeout`] above the
+//! notifications do not extend it. Set [`ToolConfig::mcp_timeout`] above the
 //! longest expected end-to-end tool execution. Per-server MCP allowlists are
 //! enforced in app-server config; the broader native-tool boundary is also
 //! supplied as a developer instruction because this app-server version does
@@ -24,8 +24,8 @@ use std::{
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Effort, McpTransport, Provider, ProviderLimitStatus, SessionDirective, TurnError, TurnEvent,
-    TurnEventSink, TurnOutcome, TurnRequest, TurnTooling, TurnUsage,
+    McpTransport, Provider, ProviderLimitStatus, ReasoningEffort, SessionDirective, ToolConfig,
+    TurnError, TurnEvent, TurnEventSink, TurnOutcome, TurnRequest, TurnUsage,
 };
 use serde_json::{Map, Value, json};
 use tokio::{
@@ -138,11 +138,11 @@ async fn run_app_server(
     request: TurnRequest,
     events: TurnEventSink,
 ) -> Result<TurnOutcome, TurnError> {
-    // Effort validates before any process spawns: an unmappable level is a
+    // ReasoningEffort validates before any process spawns: an unmappable level is a
     // configuration error, never a mid-session protocol failure.
     let effort = request.directives.effort.map(codex_effort).transpose()?;
-    let tooling = render_tooling(&request.tooling)?;
-    let mut process = AppServerProcess::spawn(&provider.command, &tooling.env).await?;
+    let rendered_tool_config = render_tool_config(&request.tool_config)?;
+    let mut process = AppServerProcess::spawn(&provider.command, &rendered_tool_config.env).await?;
 
     let initialize = process
         .request(
@@ -179,7 +179,7 @@ async fn run_app_server(
         "developerInstructions": developer_instructions(&request),
         "serviceName": "odori",
         "ephemeral": false,
-        "config": tooling.config
+        "config": rendered_tool_config.config
     });
     if let Some(model) = &request.directives.model {
         session_params["model"] = json!(model);
@@ -225,9 +225,9 @@ async fn run_app_server(
         "threadId": session_id,
         "input": [{"type": "text", "text": request.input, "text_elements": []}],
         "responsesapiClientMetadata": {
-            "odori_run_id": request.identity.run_id,
-            "odori_turn": request.identity.turn.to_string(),
-            "odori_attempt": request.identity.attempt.to_string()
+            "odori_run_id": request.turn_id.run_id,
+            "odori_turn": request.turn_id.turn.to_string(),
+            "odori_attempt": request.turn_id.attempt.to_string()
         }
     });
     if let Some(schema) = request.directives.output_schema {
@@ -332,7 +332,7 @@ async fn run_app_server(
 }
 
 #[derive(Debug, Default)]
-struct RenderedTooling {
+struct RenderedToolConfig {
     config: Map<String, Value>,
     env: Vec<(String, String)>,
 }
@@ -368,27 +368,27 @@ fn rate_limit_status(message: &Value) -> ProviderLimitStatus {
 /// `high`, `xhigh` — model support within that set is Codex's own
 /// concern. `max` exists on no Codex surface, so it fails typed before
 /// spawn.
-fn codex_effort(effort: Effort) -> Result<&'static str, TurnError> {
+fn codex_effort(effort: ReasoningEffort) -> Result<&'static str, TurnError> {
     match effort {
-        Effort::None
-        | Effort::Minimal
-        | Effort::Low
-        | Effort::Medium
-        | Effort::High
-        | Effort::XHigh => Ok(effort.as_str()),
-        Effort::Max => Err(TurnError::Config {
+        ReasoningEffort::None
+        | ReasoningEffort::Minimal
+        | ReasoningEffort::Low
+        | ReasoningEffort::Medium
+        | ReasoningEffort::High
+        | ReasoningEffort::XHigh => Ok(effort.as_str()),
+        ReasoningEffort::Max => Err(TurnError::Config {
             message: "Codex's model_reasoning_effort tops out at xhigh; there is no `max` \
-                      tier — configure the agent with Effort::XHigh or leave effort unset \
+                      tier — configure the agent with ReasoningEffort::XHigh or leave effort unset \
                       for the model default"
                 .to_owned(),
         }),
     }
 }
 
-fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
-    let mut rendered = RenderedTooling::default();
+fn render_tool_config(tool_config: &ToolConfig) -> Result<RenderedToolConfig, TurnError> {
+    let mut rendered = RenderedToolConfig::default();
     let mut names = HashSet::new();
-    for (server_index, server) in tooling.mcp_servers.iter().enumerate() {
+    for (server_index, server) in tool_config.mcp_servers.iter().enumerate() {
         if !valid_server_name(&server.name) {
             return Err(TurnError::Config {
                 message: format!(
@@ -406,7 +406,7 @@ fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
         rendered
             .config
             .insert(format!("{base}.required"), Value::Bool(true));
-        // Framework authorization and durability live behind the bridge;
+        // Framework authorization and durability live behind the MCP tool server;
         // app-server has no interactive approval channel in a provider turn.
         rendered.config.insert(
             format!("{base}.default_tools_approval_mode"),
@@ -419,11 +419,10 @@ fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
                     .insert(format!("{base}.url"), Value::String(url.clone()));
                 let mut env_headers = Map::new();
                 for (header_index, (name, value)) in headers.iter().enumerate() {
-                    // The bridge supplies a complete per-attempt header value
+                    // The MCP tool server supplies a complete per-attempt header value
                     // (`Bearer <token>`). Keep every value out of persisted
                     // thread config and let Codex resolve it from the child
-                    // environment at session start (mcp-bridge Requirement
-                    // 1.6 / task 10.2).
+                    // environment at session start.
                     let variable = format!("ODORI_CODEX_MCP_HEADER_{server_index}_{header_index}");
                     rendered.env.push((variable.clone(), value.clone()));
                     env_headers.insert(name.clone(), Value::String(variable));
@@ -453,13 +452,13 @@ fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
                 );
             }
         }
-        if let Some(timeout) = tooling.mcp_timeout {
+        if let Some(timeout) = tool_config.mcp_timeout {
             rendered.config.insert(
                 format!("{base}.tool_timeout_sec"),
                 json!(timeout.as_secs_f64()),
             );
         }
-        if let Some(allowed) = &tooling.allowed_native_tools {
+        if let Some(allowed) = &tool_config.allowed_tools {
             let prefix = format!("mcp__{}__", server.name);
             let enabled: Vec<Value> = allowed
                 .iter()
@@ -476,7 +475,7 @@ fn render_tooling(tooling: &TurnTooling) -> Result<RenderedTooling, TurnError> {
 
 fn developer_instructions(request: &TurnRequest) -> String {
     let mut instructions = request.directives.instructions.clone();
-    if let Some(allowed) = &request.tooling.allowed_native_tools {
+    if let Some(allowed) = &request.tool_config.allowed_tools {
         instructions
             .push_str("\n\nOdori tool boundary: use only these named tools for this turn: ");
         if allowed.is_empty() {
@@ -843,19 +842,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tooling_renders_http_bearer_through_environment_header() {
-        let mut tooling = TurnTooling::default();
-        tooling.mcp_servers.push(McpServerConfig {
+    fn tool_config_renders_http_bearer_through_environment_header() {
+        let mut tool_config = ToolConfig::default();
+        tool_config.mcp_servers.push(McpServerConfig {
             name: "odori".into(),
             transport: McpTransport::Http {
                 url: "http://127.0.0.1:1234/mcp".into(),
                 headers: vec![("Authorization".into(), "Bearer secret".into())],
             },
         });
-        tooling.allowed_native_tools = Some(vec!["mcp__odori__deploy".into()]);
-        tooling.mcp_timeout = Some(Duration::from_secs(120));
+        tool_config.allowed_tools = Some(vec!["mcp__odori__deploy".into()]);
+        tool_config.mcp_timeout = Some(Duration::from_secs(120));
 
-        let rendered = render_tooling(&tooling).expect("valid tooling");
+        let rendered = render_tool_config(&tool_config).expect("valid tool_config");
         assert_eq!(
             rendered.config.get("mcp_servers.odori.url"),
             Some(&json!("http://127.0.0.1:1234/mcp"))
@@ -932,16 +931,16 @@ mod tests {
     #[test]
     fn effort_maps_onto_the_codex_configuration_set_or_fails_typed() {
         for (level, wire) in [
-            (Effort::None, "none"),
-            (Effort::Minimal, "minimal"),
-            (Effort::Low, "low"),
-            (Effort::Medium, "medium"),
-            (Effort::High, "high"),
-            (Effort::XHigh, "xhigh"),
+            (ReasoningEffort::None, "none"),
+            (ReasoningEffort::Minimal, "minimal"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::XHigh, "xhigh"),
         ] {
             assert_eq!(codex_effort(level).expect("codex accepts the level"), wire);
         }
-        match codex_effort(Effort::Max) {
+        match codex_effort(ReasoningEffort::Max) {
             Err(TurnError::Config { message }) => assert!(message.contains("xhigh")),
             other => panic!("expected a typed configuration error, got {other:?}"),
         }

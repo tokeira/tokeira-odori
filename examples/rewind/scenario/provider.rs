@@ -9,7 +9,7 @@ use odori::agents::provider::{
 use serde_json::json;
 
 use super::{
-    bridge::{call_tool, tool_text, tooling},
+    mcp_client::{call_tool, tool_config_error, tool_text},
     model::{DeliberationSnapshot, PLAN_HASH, RewindEvent, TimelineInput},
     state::RewindState,
 };
@@ -35,7 +35,8 @@ impl Provider for RewindProvider {
             session_id: session_id.clone(),
         });
         if request.directives.name == "timeline" {
-            let input: TimelineInput = serde_json::from_str(&request.input).map_err(tooling)?;
+            let input: TimelineInput =
+                serde_json::from_str(&request.input).map_err(tool_config_error)?;
             let text = json!({
                 "plan_hash": input.snapshot.plan_hash,
                 "decision": input.decision,
@@ -50,30 +51,30 @@ impl Provider for RewindProvider {
             .presentations
             .lock()
             .expect("rewind presentations lock")
-            .push((request.identity.attempt, call_id.to_owned()));
-        if request.identity.attempt > 1 {
+            .push((request.turn_id.attempt, call_id.to_owned()));
+        if request.turn_id.attempt > 1 {
             self.state
                 .events
-                .send(RewindEvent::RetryPresented(request.identity.attempt))
-                .map_err(tooling)?;
+                .send(RewindEvent::RetryPresented(request.turn_id.attempt))
+                .map_err(tool_config_error)?;
         }
         let result = call_tool(
-            &request.tooling,
+            &request.tool_config,
             "checkpoint",
             json!({"label": "plan-ready"}),
             call_id,
         )
         .await?;
         let receipt = tool_text(&result)?;
-        if request.identity.attempt == 1 {
+        if request.turn_id.attempt == 1 {
             self.state
                 .events
                 .send(RewindEvent::CheckpointRecorded)
-                .map_err(tooling)?;
+                .map_err(tool_config_error)?;
             self.state
                 .events
                 .send(RewindEvent::FailureReturned)
-                .map_err(tooling)?;
+                .map_err(tool_config_error)?;
             return Err(TurnError::HarnessDied {
                 exit_code: Some(137),
                 stderr_head: "demo kill at plan-ready checkpoint".to_owned(),
@@ -86,7 +87,7 @@ impl Provider for RewindProvider {
         };
         Ok(TurnOutcome::new(
             session_id,
-            serde_json::to_string(&snapshot).map_err(tooling)?,
+            serde_json::to_string(&snapshot).map_err(tool_config_error)?,
         ))
     }
 }

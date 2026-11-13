@@ -1,7 +1,7 @@
 //! The provider seam: one implementation per model backend, one call per
 //! **harness turn**.
 //!
-//! This module is the frozen boundary between the runner and every model
+//! This module is the boundary between the runner and every model
 //! backend. The unit of work is deliberately a *turn*, not a model
 //! completion: a subscription provider (headless Claude
 //! Code, Codex app-server) spawns or resumes its harness, lets the harness
@@ -18,7 +18,7 @@
 //!
 //! Everything a provider needs at spawn time rides [`TurnRequest`]: MCP server
 //! injection ([`McpServerConfig`]), MCP timeout pinning
-//! ([`TurnTooling::mcp_timeout`]), and the exit-classification taxonomy
+//! ([`ToolConfig::mcp_timeout`]), and the exit-classification taxonomy
 //! ([`TurnError`]).
 
 use std::{
@@ -76,22 +76,24 @@ pub trait Provider: fmt::Debug + Send + Sync + 'static {
 /// Everything a provider receives for one turn.
 ///
 /// Constructed by the runner's turn activity; providers only read it.
-/// `#[non_exhaustive]` so the seam can grow additively after the freeze.
+/// `#[non_exhaustive]` so the seam can grow additively while preserving compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TurnRequest {
     /// Durable identity of this turn execution. Providers stamp it on
     /// everything they emit (logs, MCP `_meta`, exit reports) so the
     /// workflow side can correlate and fence.
-    pub identity: TurnIdentity,
+    #[serde(rename = "identity")]
+    pub turn_id: TurnId,
     /// The agent's declarative direction for the backend.
     pub directives: AgentDirectives,
     /// The user-visible input for this turn (the prompt).
     pub input: String,
     /// Start a fresh backend session, or resume an existing one.
     pub session: SessionDirective,
-    /// Tool exposure for the turn: native-tool scoping and MCP attachment.
-    pub tooling: TurnTooling,
+    /// Tool exposure for the turn: native-tool scoping and MCP configuration.
+    #[serde(rename = "tooling")]
+    pub tool_config: ToolConfig,
     /// Provider-side deadline for the whole turn. The turn activity's
     /// start-to-close timeout sits above this; the provider should fail
     /// with [`TurnError::Timeout`] rather than be killed from outside.
@@ -102,17 +104,17 @@ impl TurnRequest {
     /// Assemble a request. Arguments beyond these have defaults; set them
     /// through the public fields.
     pub fn new(
-        identity: TurnIdentity,
+        turn_id: TurnId,
         directives: AgentDirectives,
         input: impl Into<String>,
         session: SessionDirective,
     ) -> Self {
         Self {
-            identity,
+            turn_id,
             directives,
             input: input.into(),
             session,
-            tooling: TurnTooling::default(),
+            tool_config: ToolConfig::default(),
             deadline: None,
         }
     }
@@ -120,7 +122,7 @@ impl TurnRequest {
 
 /// Durable coordinates of one turn execution attempt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TurnIdentity {
+pub struct TurnId {
     /// The run (workflow execution) this turn belongs to.
     pub run_id: String,
     /// Zero-based turn index within the run.
@@ -143,9 +145,9 @@ pub struct AgentDirectives {
     /// means the backend's default.
     pub model: Option<String>,
     /// Provider-neutral reasoning effort. `None` means the backend's
-    /// default; a set level maps per provider ([`Effort`]'s contract).
+    /// default; a set level maps per provider ([`ReasoningEffort`]'s contract).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub effort: Option<Effort>,
+    pub effort: Option<ReasoningEffort>,
     /// JSON Schema the final result must satisfy, where the backend can
     /// enforce it (headless Claude Code: `--json-schema`). Typed-output
     /// parsing happens runner-side either way.
@@ -180,7 +182,7 @@ impl AgentDirectives {
 /// all-providers-in-one-PR rule made structural.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Effort {
+pub enum ReasoningEffort {
     /// Explicitly no deliberation, where the backend can be told so — as
     /// distinct from leaving effort unset, which means the backend's own
     /// default.
@@ -200,23 +202,23 @@ pub enum Effort {
     Max,
 }
 
-impl Effort {
+impl ReasoningEffort {
     /// The lowercase wire form (`"xhigh"`), identical to the serde
     /// representation.
     pub fn as_str(self) -> &'static str {
         match self {
-            Effort::None => "none",
-            Effort::Minimal => "minimal",
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High => "high",
-            Effort::XHigh => "xhigh",
-            Effort::Max => "max",
+            ReasoningEffort::None => "none",
+            ReasoningEffort::Minimal => "minimal",
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+            ReasoningEffort::XHigh => "xhigh",
+            ReasoningEffort::Max => "max",
         }
     }
 }
 
-impl fmt::Display for Effort {
+impl fmt::Display for ReasoningEffort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -250,30 +252,29 @@ pub enum SessionDirective {
 /// Tool exposure for one turn.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct TurnTooling {
-    /// Backend-native tools the harness may use, in the backend's own
-    /// naming (headless Claude Code: `--allowedTools` values). `None`
-    /// leaves the backend's defaults untouched; `Some(vec![])` disallows
-    /// native tooling.
-    pub allowed_native_tools: Option<Vec<String>>,
+pub struct ToolConfig {
+    /// Allowed native and MCP tool names in the backend's naming
+    /// (Claude Code: `--allowedTools` values). `None` leaves defaults
+    /// untouched. Enforcement, including empty lists, is provider-specific.
+    #[serde(rename = "allowed_native_tools")]
+    pub allowed_tools: Option<Vec<String>>,
     /// Names of the agent's framework-owned `Tool`s, always present as
-    /// metadata regardless of the bridge. Providers that cannot delegate
+    /// metadata regardless of the MCP tool server. Providers that cannot delegate
     /// to a harness (the API tier) use this to reject
-    /// tools-without-a-bridge as a configuration error instead of running
-    /// silently toolless. Additive growth on the frozen seam.
+    /// tools without MCP access as a configuration error instead of running
+    /// silently toolless. Additive growth on the provider contract.
     #[serde(default)]
-    pub framework_tools: Vec<String>,
+    #[serde(rename = "framework_tools")]
+    pub framework_tool_names: Vec<String>,
     /// MCP servers to attach at spawn. With the mcp-bridge active this
-    /// carries the bridge endpoint; it accepts any MCP server config.
+    /// carries the MCP tool server endpoint; it accepts any MCP server config.
     pub mcp_servers: Vec<McpServerConfig>,
-    /// Pin for the backend's MCP client timeout, so the bridge's keepalive
-    /// cadence has a known bound to stay under (mcp-bridge Requirement
-    /// 5.3). Ignored when the backend has no such knob.
+    /// Pin for the backend's MCP client timeout, so the MCP tool server's keepalive
+    /// cadence stays below it. Ignored when the backend has no such knob.
     pub mcp_timeout: Option<Duration>,
 }
 
-/// One MCP server attachment, in the two transports the mcp-bridge spec
-/// commits to.
+/// One MCP server configuration using HTTP or stdio transport.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     /// Server name as the model sees it (`mcp__{name}__{tool}`).
@@ -282,18 +283,18 @@ pub struct McpServerConfig {
     pub transport: McpTransport,
 }
 
-/// Transport for one MCP server attachment.
+/// Transport for one MCP server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum McpTransport {
-    /// Streamable HTTP endpoint (the bridge's primary transport).
+    /// Streamable HTTP endpoint (the MCP tool server's primary transport).
     Http {
         /// Endpoint URL.
         url: String,
-        /// Headers to send on every request (e.g. the bridge's per-run
+        /// Headers to send on every request (e.g. the MCP tool server's per-run
         /// bearer token).
         headers: Vec<(String, String)>,
     },
-    /// A stdio server the backend spawns itself (the bridge's committed
+    /// A stdio server the backend spawns itself (the MCP tool server's committed
     /// fallback shim, and the general MCP case).
     Stdio {
         /// Executable to spawn.
@@ -305,27 +306,29 @@ pub enum McpTransport {
     },
 }
 
-/// A source of per-turn MCP attachments — the seam the mcp-bridge implements
-/// without `odori-agents` depending on it. With `preview` off no source
-/// exists and turns carry only their agent-declared tooling.
-pub trait AttachmentSource: std::fmt::Debug + Send + Sync + 'static {
-    /// The attachment for one turn, or `None` when the bridge declines
+/// Prepares MCP access for one turn attempt without making
+/// `odori-agents` depend on the MCP tool server. Implementations may mint
+/// credentials and register routing context before returning configuration.
+/// Server startup happens separately. With `preview` off, turns carry only
+/// their agent-declared tool configuration.
+pub trait McpBootstrapper: std::fmt::Debug + Send + Sync + 'static {
+    /// Bootstrap access for one turn attempt, or return `None` when unnecessary
     /// (e.g. the agent has no framework tools). `workflow_id` addresses the
-    /// run's workflow for the bridge's update path.
-    fn attachment_for(
+    /// run's workflow for the MCP tool server's update path.
+    fn bootstrap_mcp(
         &self,
         workflow_id: &str,
-        identity: &TurnIdentity,
+        turn_id: &TurnId,
         agent_name: &str,
-    ) -> Option<TurnAttachment>;
+    ) -> Option<McpConfig>;
 }
 
-/// One turn's bridge attachment, merged into [`TurnTooling`] by the turn
+/// Per-attempt MCP access configuration, merged into [`ToolConfig`] by the turn
 /// activity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct TurnAttachment {
-    /// The bridge's MCP server config (endpoint + bearer token).
+pub struct McpConfig {
+    /// MCP server connection configuration (endpoint + bearer token).
     pub mcp_server: McpServerConfig,
     /// Harness MCP-timeout pin.
     pub mcp_timeout: Option<Duration>,
@@ -333,8 +336,8 @@ pub struct TurnAttachment {
     pub allowed_tools: Vec<String>,
 }
 
-impl TurnAttachment {
-    /// Assemble an attachment (the struct is `non_exhaustive`; this is the
+impl McpConfig {
+    /// Assemble MCP configuration (the struct is `non_exhaustive`; this is the
     /// out-of-crate constructor).
     pub fn new(
         mcp_server: McpServerConfig,
@@ -579,15 +582,15 @@ pub enum TurnError {
         /// First line of captured stderr, for diagnostics.
         stderr_head: String,
     },
-    /// The backend process died with bridge tool calls still awaiting
+    /// The backend process died with MCP tool calls still awaiting
     /// their MCP responses:
-    /// the provider observed `tool_use` events for bridge tools that no
+    /// the provider observed `tool_use` events for MCP tools that no
     /// `tool_result` answered before death. Retryable — the in-flight
     /// executions run to completion and record, and the resumed session's
     /// replay is served from the registry. Additive taxonomy growth on the
-    /// frozen seam (the enum is `non_exhaustive` for exactly this).
+    /// provider contract (the enum is `non_exhaustive` for exactly this).
     #[error(
-        "harness died awaiting {} bridge tool call(s) (exit {exit_code:?})",
+        "harness died awaiting {} MCP tool call(s) (exit {exit_code:?})",
         pending_calls.len()
     )]
     HarnessDiedAwaitingTools {
@@ -611,9 +614,9 @@ pub enum TurnError {
         /// Time spent before the provider gave up.
         elapsed: Duration,
     },
-    /// The MCP attachment or another tooling seam failed mid-turn in a way
+    /// The MCP configuration or another tool-access boundary failed mid-turn in a way
     /// the backend could not surface as a tool result. Retryable.
-    #[error("tooling failure: {message}")]
+    #[error("tool_config failure: {message}")]
     Tooling {
         /// What broke.
         message: String,
@@ -716,9 +719,9 @@ mod tests {
     #[test]
     fn turn_request_round_trips_through_serde() {
         let mut directives = AgentDirectives::new("a", "be helpful");
-        directives.effort = Some(Effort::XHigh);
+        directives.effort = Some(ReasoningEffort::XHigh);
         let request = TurnRequest::new(
-            TurnIdentity {
+            TurnId {
                 run_id: "r".into(),
                 turn: 3,
                 attempt: 2,
@@ -732,8 +735,8 @@ mod tests {
         let json = serde_json::to_string(&request).expect("serialize");
         assert!(json.contains("\"effort\":\"xhigh\""), "{json}");
         let back: TurnRequest = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back.identity.turn, 3);
-        assert_eq!(back.directives.effort, Some(Effort::XHigh));
+        assert_eq!(back.turn_id.turn, 3);
+        assert_eq!(back.directives.effort, Some(ReasoningEffort::XHigh));
         assert!(matches!(
             back.session,
             SessionDirective::ResumeForked { .. }

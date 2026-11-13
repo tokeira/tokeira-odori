@@ -1,20 +1,20 @@
 # Durable tools
 
 A framework tool can be called while a vendor harness is still inside its
-turn. The optional MCP bridge carries that call back into the run-loop workflow
+turn. The optional MCP tool server carries that call back into the run-loop workflow
 so the tool executes as its own durable activity.
 
-## Enable the bridge
+## Enable the MCP tool server
 
 Enable `preview` on the `odori` dependency, register `Tool` values on the
-agent, and pass a `BridgeConfig` to `OdoriRuntimeBuilder::bridge`. The
+agent, and pass a `McpToolServerConfig` to `OdoriRuntimeBuilder::mcp_server`. The
 embedded examples' manifest demonstrates the feature wiring, and
 [slice-fleet](../examples/slice-fleet/scenario/runtime.rs) demonstrates runtime
 assembly.
 
-With `preview` disabled, there is no listener and no harness MCP attachment.
+With `preview` disabled, there is no listener and no harness MCP configuration.
 A framework tool's Rust handler does not run; harness-native tools remain
-controlled by `Agent::with_allowed_native_tools`.
+controlled by `Agent::with_allowed_tools`.
 
 ## Call path
 
@@ -28,11 +28,11 @@ With `preview` enabled:
    or fork.
 3. `tools/call` submits the invocation as a workflow update.
 4. A fresh invocation schedules `execute_tool` with the tool's
-   `ToolPolicy`.
-5. The bridge replies only after the update has recorded the result in
+   `ToolExecutionPolicy`.
+5. The MCP tool server replies only after the update has recorded the result in
    workflow history.
 
-The default bridge keepalive is 10 seconds and the default harness MCP timeout
+The default MCP tool server keepalive is 10 seconds and the default harness MCP timeout
 pin is 120 seconds. Configuration rejects a keepalive cadence that is not
 strictly below the timeout. Keepalive progress prevents an idle transport from
 looking dead; Codex 0.148.0-alpha.15 still applies a fixed wall-clock tool
@@ -59,7 +59,7 @@ Observed harness behavior matters:
 - Codex 0.148.0-alpha.15 generated a fresh `_meta.callId` after
   process-death resume and when retrying a timed-out call in the same turn.
 
-The bridge therefore deduplicates identities it can prove equal and does not
+The MCP tool server therefore deduplicates identities it can prove equal and does not
 guess that different IDs mean the same side effect.
 
 ## Failure behavior
@@ -72,7 +72,7 @@ result; a later presentation of the same identity replays it.
 
 One result is capped at 256 KiB by default before it enters history. An
 oversized result becomes a model-visible error instructing the tool to write
-large output elsewhere and return a path. `BridgeConfig::max_result_bytes`
+large output elsewhere and return a path. `McpToolServerConfig::max_result_bytes`
 changes that ceiling.
 
 Tokens are per turn attempt. Tokens from superseded attempts remain resolvable
@@ -83,12 +83,12 @@ workflow is confirmed terminal.
 ## API providers as MCP clients
 
 The API providers have no harness to host native tools. When an API-backed
-agent declares framework tools, `preview` and a runtime bridge are required.
-The provider lists tools from the bridge, maps them to the vendor's function
+agent declares framework tools, `preview` and a runtime MCP tool server are required.
+The provider lists tools from the MCP tool server, maps them to the vendor's function
 schema, and POSTs `tools/call` itself using the vendor tool-use ID.
 
-Declaring tools without a bridge is a configuration error. Supplying
+Declaring tools without an MCP tool server is a configuration error. Supplying
 harness-native allowed tools to an API provider is also a configuration error.
-The API path accepts the bridge's HTTP attachment; it cannot dial a stdio MCP
+The API path accepts the MCP tool server's HTTP configuration; it cannot dial a stdio MCP
 attachment.
 

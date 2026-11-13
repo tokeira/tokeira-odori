@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Runs inside workflow code — determinism is a hard requirement, not a
 /// style preference. A tripped guardrail ends the run with
-/// [`crate::run::RunEnd::GuardrailBlocked`]; it does not retry the turn.
+/// [`crate::run::RunEndReason::GuardrailBlocked`]; it does not retry the turn.
 pub trait Guardrail: fmt::Debug + Send + Sync + 'static {
     /// Stable name, recorded in the run output when the guardrail trips.
     fn name(&self) -> &str;

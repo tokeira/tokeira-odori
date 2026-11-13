@@ -1,6 +1,5 @@
-//! Crash-mid-turn through the real stack (mcp-bridge spec, Testing
-//! Strategy): a scripted MCP-client provider plays the harness against the
-//! bridge, the run-loop workflow, `execute_tool`, and the embedded engine —
+//! Crash-mid-turn through the real stack : a scripted MCP-client provider plays the harness against the
+//! MCP tool server, the run-loop workflow, `execute_tool`, and the embedded engine —
 //! killing itself mid-turn to prove dedupe, and replaying stale attempts to
 //! prove fencing. No real harness involved; deterministic by construction.
 
@@ -15,13 +14,13 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use odori_agents::{
-    Agent, AgentRegistry, Providers, Tool,
+    Agent, AgentRegistry, ProviderRegistry, Tool,
     provider::{Provider, TurnError, TurnEventSink, TurnOutcome, TurnRequest},
 };
 use odori_dev_support::endpoint;
 use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
-use odori_mcp_bridge::BridgeConfig;
+use odori_mcp_bridge::McpToolServerConfig;
 use serde_json::{Value, json};
 
 /// One MCP `tools/call` as a harness would issue it. Returns the full SSE
@@ -41,7 +40,7 @@ async fn mcp_call(url: &str, auth: &str, tool: &str, call_id: &str) -> (String, 
         .json(&body)
         .send()
         .await
-        .expect("bridge reachable")
+        .expect("mcp_server reachable")
         .text()
         .await
         .expect("sse body");
@@ -61,7 +60,7 @@ async fn mcp_status(url: &str, auth: &str) -> reqwest::StatusCode {
         .json(&json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}))
         .send()
         .await
-        .expect("bridge reachable")
+        .expect("mcp_server reachable")
         .status()
 }
 
@@ -72,7 +71,7 @@ fn result_text(frame: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// A provider that *is* an MCP client: attempt 1 calls the bridge and then
+/// A provider that *is* an MCP client: attempt 1 calls the MCP tool server and then
 /// dies before delivering; attempt 2 replays the same call id and returns.
 #[derive(Debug)]
 struct DyingMcpHarness {
@@ -91,14 +90,14 @@ impl Provider for DyingMcpHarness {
         request: TurnRequest,
         _events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
-        let (url, auth) = endpoint(&request.tooling).expect("bridge attached");
+        let (url, auth) = endpoint(&request.tool_config).expect("mcp_server attached");
         let (body, frame) = mcp_call(&url, &auth, "deploy", "tu-dedupe").await;
         let text = result_text(&frame).expect("tool result");
         self.observed.lock().expect("lock").push(text.clone());
         self.bodies.lock().expect("lock").push(body);
-        if request.identity.attempt == 1 {
+        if request.turn_id.attempt == 1 {
             // Died after the tool executed, before the result reached the
-            // model — the spec's crash-mid-turn shape.
+            // model — the MCP contract's crash-mid-turn shape.
             return Err(TurnError::HarnessDied {
                 exit_code: Some(137),
                 stderr_head: "killed mid-await".to_owned(),
@@ -121,7 +120,7 @@ async fn crash_mid_turn_replays_without_reexecution() -> Result<()> {
             let counter = counter.clone();
             async move {
                 // Slow enough that keepalive progress must flow (spec
-                // Requirement 5.1; the bridge cadence below is 100ms).
+                // The MCP tool server cadence below is 100ms).
                 tokio::time::sleep(Duration::from_millis(350)).await;
                 let execution = counter.fetch_add(1, Ordering::SeqCst) + 1;
                 Ok(json!(format!("deployment-{execution}")))
@@ -134,13 +133,13 @@ async fn crash_mid_turn_replays_without_reexecution() -> Result<()> {
         bodies: Mutex::new(Vec::new()),
     });
     let (engine, _g1, _g2) = start_engine().await?;
-    let mut bridge_config = BridgeConfig::default();
-    bridge_config.keepalive = Duration::from_millis(100);
+    let mut mcp_server_config = McpToolServerConfig::default();
+    mcp_server_config.keepalive = Duration::from_millis(100);
     let runtime = OdoriRuntime::builder("tq-bridge-crash")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider.clone()))
-        .bridge(bridge_config)
+        .providers(ProviderRegistry::new(provider.clone()))
+        .mcp_server(mcp_server_config)
         .start()
         .await?;
 
@@ -196,8 +195,8 @@ impl Provider for ZombieMcpHarness {
         request: TurnRequest,
         _events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
-        let (url, auth) = endpoint(&request.tooling).expect("bridge attached");
-        if request.identity.attempt == 1 {
+        let (url, auth) = endpoint(&request.tool_config).expect("mcp_server attached");
+        if request.turn_id.attempt == 1 {
             let (_, frame) = mcp_call(&url, &auth, "deploy", "tu-a").await;
             result_text(&frame).expect("attempt 1 tool result");
             *self.stale.lock().expect("lock") = Some((url, auth));
@@ -247,8 +246,8 @@ async fn stale_attempts_are_fenced_but_served_recorded_results() -> Result<()> {
     let runtime = OdoriRuntime::builder("tq-bridge-fence")
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(registry)
-        .providers(Providers::new(provider.clone()))
-        .bridge(BridgeConfig::default())
+        .providers(ProviderRegistry::new(provider.clone()))
+        .mcp_server(McpToolServerConfig::default())
         .start()
         .await?;
 
@@ -258,13 +257,13 @@ async fn stale_attempts_are_fenced_but_served_recorded_results() -> Result<()> {
         .await?;
     assert_eq!(text, "ran-tu-b");
 
-    // The zombie's fresh call was fenced (spec Requirement 4.2)…
+    // The zombie's fresh call was fenced…
     assert_eq!(
         *provider.fenced_code.lock().expect("lock"),
         Some(-32011),
         "stale-attempt call was not fenced"
     );
-    // …its recorded call was served (Requirement 4.3)…
+    // …its recorded call was served…
     assert_eq!(
         provider.replayed_text.lock().expect("lock").as_deref(),
         Some("ran-tu-a"),

@@ -1,31 +1,31 @@
 //! Pure flag rendering for the headless Claude Code harness: the
-//! spawn-time attachment for the Claude provider, implemented against
-//! the frozen `TurnTooling` contract. No process is spawned here.
+//! spawn-time tool configuration for the Claude provider, implemented against
+//! the `ToolConfig` contract. No process is spawned here.
 
-use odori_agents::provider::{McpTransport, TurnTooling};
+use odori_agents::provider::{McpTransport, ToolConfig};
 use serde_json::{Map, Value, json};
 
-/// The CLI arguments a turn's tooling adds to a `claude -p` invocation:
+/// The CLI arguments a turn's tool configuration adds to a `claude -p` tool call:
 /// `--mcp-config <inline json>`, `--allowedTools <list>`, and the MCP
 /// timeout pin via environment. Claude 2.1.220 pins MCP timeouts through
 /// `MCP_TIMEOUT` and `MCP_TOOL_TIMEOUT`.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ClaudeToolingArgs {
+pub struct ClaudeToolArgs {
     /// Arguments appended verbatim to the CLI invocation.
     pub args: Vec<String>,
     /// Environment entries set on the spawned process.
     pub env: Vec<(String, String)>,
 }
 
-/// Render one turn's tooling. Deterministic and total: unknown transports
-/// render to their nearest CLI equivalent, and empty tooling renders to
+/// Render one turn's tool configuration. Deterministic and total: unknown transports
+/// render to their nearest CLI equivalent, and empty tool configuration renders to
 /// nothing.
-pub fn render_tooling(tooling: &TurnTooling) -> ClaudeToolingArgs {
-    let mut rendered = ClaudeToolingArgs::default();
+pub fn render_tool_args(tool_config: &ToolConfig) -> ClaudeToolArgs {
+    let mut rendered = ClaudeToolArgs::default();
 
-    if !tooling.mcp_servers.is_empty() {
+    if !tool_config.mcp_servers.is_empty() {
         let mut servers = Map::new();
-        for server in &tooling.mcp_servers {
+        for server in &tool_config.mcp_servers {
             let entry = match &server.transport {
                 McpTransport::Http { url, headers } => {
                     let header_map: Map<String, Value> = headers
@@ -50,14 +50,14 @@ pub fn render_tooling(tooling: &TurnTooling) -> ClaudeToolingArgs {
             .push(json!({ "mcpServers": servers }).to_string());
     }
 
-    if let Some(allowed) = &tooling.allowed_native_tools
+    if let Some(allowed) = &tool_config.allowed_tools
         && !allowed.is_empty()
     {
         rendered.args.push("--allowedTools".to_owned());
         rendered.args.push(allowed.join(","));
     }
 
-    if let Some(timeout) = tooling.mcp_timeout {
+    if let Some(timeout) = tool_config.mcp_timeout {
         let millis = timeout.as_millis().to_string();
         rendered
             .env
@@ -77,19 +77,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bridge_attachment_renders_to_config_allowlist_and_pins() {
-        let mut tooling = TurnTooling::default();
-        tooling.mcp_servers.push(McpServerConfig {
+    fn mcp_bootstrap_renders_to_config_allowlist_and_pins() {
+        let mut tool_config = ToolConfig::default();
+        tool_config.mcp_servers.push(McpServerConfig {
             name: "odori".to_owned(),
             transport: McpTransport::Http {
                 url: "http://127.0.0.1:9999/mcp".to_owned(),
                 headers: vec![("Authorization".to_owned(), "Bearer tok".to_owned())],
             },
         });
-        tooling.allowed_native_tools = Some(vec!["mcp__odori__deploy".to_owned()]);
-        tooling.mcp_timeout = Some(Duration::from_secs(120));
+        tool_config.allowed_tools = Some(vec!["mcp__odori__deploy".to_owned()]);
+        tool_config.mcp_timeout = Some(Duration::from_secs(120));
 
-        let rendered = render_tooling(&tooling);
+        let rendered = render_tool_args(&tool_config);
         assert_eq!(rendered.args[0], "--mcp-config");
         let config: Value = serde_json::from_str(&rendered.args[1]).expect("inline json");
         assert_eq!(
@@ -115,17 +115,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_tooling_renders_to_nothing() {
+    fn empty_tool_config_renders_to_nothing() {
         assert_eq!(
-            render_tooling(&TurnTooling::default()),
-            ClaudeToolingArgs::default()
+            render_tool_args(&ToolConfig::default()),
+            ClaudeToolArgs::default()
         );
     }
 
     #[test]
     fn stdio_shim_renders_as_command_config() {
-        let mut tooling = TurnTooling::default();
-        tooling.mcp_servers.push(McpServerConfig {
+        let mut tool_config = ToolConfig::default();
+        tool_config.mcp_servers.push(McpServerConfig {
             name: "odori".to_owned(),
             transport: McpTransport::Stdio {
                 command: "odori-shim".to_owned(),
@@ -133,7 +133,7 @@ mod tests {
                 env: vec![("ODORI_BRIDGE".to_owned(), "http://x/mcp".to_owned())],
             },
         });
-        let rendered = render_tooling(&tooling);
+        let rendered = render_tool_args(&tool_config);
         let config: Value = serde_json::from_str(&rendered.args[1]).expect("inline json");
         assert_eq!(
             config

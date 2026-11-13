@@ -16,7 +16,7 @@ each dimension. The run loop checks before starting a turn and again after the
 completed turn and any child spend have been recorded.
 
 When a cap is exhausted or crossed, the workflow returns
-`RunEnd::BudgetExceeded { cap }`. The cap records the spent value and the
+`RunEndReason::BudgetExceeded { cap }`. The cap records the spent value and the
 configured limit. The runner exposes this as
 `RunnerError::BudgetExceeded { partial }`, where the partial output includes
 the transcript's final text, session ID, aggregate usage, turn count, and clean
@@ -59,7 +59,7 @@ tier re-spend model tokens; stable tool results replay from history.
 A `Handoff` is a child workflow, not an in-process function call. The parent
 exposes it as a tool. When called, the workflow validates the target, calculates
 the parent's remaining budget, starts the target agent's `AgentRun`, and waits
-for its result. Handoffs are framework tools, so the `preview` MCP bridge must
+for its result. Handoffs are framework tools, so the `preview` MCP tool server must
 be enabled for a harness to call them.
 
 The child runs under the intersection of:

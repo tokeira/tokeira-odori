@@ -23,7 +23,7 @@ are executable:
   than stretching a frozen contract.
 
 The model behavior is scripted, but the embedded engine, signals, workflow
-updates, HTTP MCP bridge, tool activities, retries, child workflows, and budget
+updates, HTTP MCP tool server, tool activities, retries, child workflows, and budget
 accounting are real.
 
 ## Run it

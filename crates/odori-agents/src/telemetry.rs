@@ -49,7 +49,7 @@ use tracing::{Instrument as _, Span, field};
 
 use crate::{
     provider::TurnError,
-    run::{RunEnd, RunOutput, TurnActivityOutput},
+    run::{RunEndReason, RunOutput, TurnActivityOutput},
 };
 
 fn run_registry() -> &'static Mutex<HashMap<String, Span>> {
@@ -78,12 +78,12 @@ fn lookup(registry: &'static Mutex<HashMap<String, Span>>, key: &str) -> Option<
 /// the next parent tier. Telemetry stays best-effort; execution state is
 /// never read from here.
 #[derive(Debug)]
-pub(crate) struct RegisteredSpan {
+pub(crate) struct SpanRegistration {
     key: String,
     registry: &'static Mutex<HashMap<String, Span>>,
 }
 
-impl RegisteredSpan {
+impl SpanRegistration {
     fn insert(registry: &'static Mutex<HashMap<String, Span>>, key: &str, span: &Span) -> Self {
         registry
             .lock()
@@ -96,7 +96,7 @@ impl RegisteredSpan {
     }
 }
 
-impl Drop for RegisteredSpan {
+impl Drop for SpanRegistration {
     fn drop(&mut self) {
         self.registry
             .lock()
@@ -111,7 +111,7 @@ impl Drop for RegisteredSpan {
 #[derive(Debug)]
 pub(crate) struct ClientRunTelemetry {
     pub(crate) span: Span,
-    _registration: RegisteredSpan,
+    _registration: SpanRegistration,
 }
 
 impl ClientRunTelemetry {
@@ -135,7 +135,7 @@ impl ClientRunTelemetry {
             odori.run.end = field::Empty,
             otel.status_code = field::Empty,
         );
-        let registration = RegisteredSpan::insert(run_registry(), run_id, &span);
+        let registration = SpanRegistration::insert(run_registry(), run_id, &span);
         Self {
             span,
             _registration: registration,
@@ -157,10 +157,10 @@ impl ClientRunTelemetry {
             .record("odori.run.cost_usd", output.usage.total_cost_usd);
         self.span.record("odori.run.turns", output.turns);
         let end = match output.end {
-            RunEnd::Completed => "completed",
-            RunEnd::ConversationEnded => "conversation_ended",
-            RunEnd::BudgetExceeded { .. } => "budget_exceeded",
-            RunEnd::GuardrailBlocked { .. } => "guardrail_blocked",
+            RunEndReason::Completed => "completed",
+            RunEndReason::ConversationEnded => "conversation_ended",
+            RunEndReason::BudgetExceeded { .. } => "budget_exceeded",
+            RunEndReason::GuardrailBlocked { .. } => "guardrail_blocked",
         };
         self.span.record("odori.run.end", end);
         self.span.record("otel.status_code", "OK");
@@ -232,8 +232,8 @@ pub(crate) fn turn_span(
 
 /// Register a turn span as the workflow's in-flight turn, so mid-turn tool
 /// executions parent beneath it.
-pub(crate) fn register_turn(workflow_id: &str, span: &Span) -> RegisteredSpan {
-    RegisteredSpan::insert(turn_registry(), workflow_id, span)
+pub(crate) fn register_turn(workflow_id: &str, span: &Span) -> SpanRegistration {
+    SpanRegistration::insert(turn_registry(), workflow_id, span)
 }
 
 /// Record the backend session id as soon as it is known.
@@ -241,7 +241,7 @@ pub(crate) fn record_session(span: &Span, session_id: &str) {
     span.record("gen_ai.conversation.id", session_id);
 }
 
-/// Record a harness-native tool invocation observed mid-turn. These are
+/// Record a harness-native tool call observed mid-turn. These are
 /// events, not spans: the harness reports that a tool ran, not when it
 /// started or finished.
 pub(crate) fn record_harness_tool_use(span: &Span, name: &str) {

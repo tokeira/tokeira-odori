@@ -3,15 +3,15 @@
 use std::time::Duration;
 
 use odori_agents::provider::{
-    AgentDirectives, Effort, McpServerConfig, McpTransport, Provider, SessionDirective, TurnError,
-    TurnEvent, TurnEventSink, TurnIdentity, TurnRequest,
+    AgentDirectives, McpServerConfig, McpTransport, Provider, ReasoningEffort, SessionDirective,
+    TurnError, TurnEvent, TurnEventSink, TurnId, TurnRequest,
 };
 use odori_providers::{CodexProvider, EXPECTED_CODEX_CLI_VERSION};
 use tokio::sync::mpsc;
 
 fn request(input: &str) -> TurnRequest {
     TurnRequest::new(
-        TurnIdentity {
+        TurnId {
             run_id: "run-fake".into(),
             turn: 0,
             attempt: 1,
@@ -99,16 +99,16 @@ async fn scripted_app_server_turn_streams_events_and_result() {
     let provider = CodexProvider::with_command(&command);
     let (sender, mut receiver) = mpsc::channel(32);
     let mut turn = request("run the fake turn");
-    turn.directives.effort = Some(Effort::High);
-    turn.tooling.mcp_servers.push(McpServerConfig {
+    turn.directives.effort = Some(ReasoningEffort::High);
+    turn.tool_config.mcp_servers.push(McpServerConfig {
         name: "odori".into(),
         transport: McpTransport::Http {
             url: "http://127.0.0.1:9999/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer test-token".into())],
         },
     });
-    turn.tooling.allowed_native_tools = Some(vec!["mcp__odori__deploy".into()]);
-    turn.tooling.mcp_timeout = Some(Duration::from_secs(120));
+    turn.tool_config.allowed_tools = Some(vec!["mcp__odori__deploy".into()]);
+    turn.tool_config.mcp_timeout = Some(Duration::from_secs(120));
 
     let outcome = provider
         .execute_turn(turn, TurnEventSink::new(sender))
@@ -169,7 +169,7 @@ async fn unmappable_effort_fails_typed_before_the_session_spawns() {
     let provider = CodexProvider::with_command(&command);
     let (sender, _receiver) = mpsc::channel(4);
     let mut turn = request("never runs");
-    turn.directives.effort = Some(Effort::Max);
+    turn.directives.effort = Some(ReasoningEffort::Max);
     match provider
         .execute_turn(turn, TurnEventSink::new(sender))
         .await

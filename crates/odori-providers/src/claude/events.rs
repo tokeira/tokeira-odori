@@ -105,12 +105,12 @@ pub enum ContentBlock {
         /// The text itself.
         text: String,
     },
-    /// A tool invocation; `id` is the call id the bridge receives in
+    /// A tool call; `id` is the call id the MCP tool server receives in
     /// `_meta["claudecode/toolUseId"]`.
     ToolUse {
         /// Harness-assigned tool-use id.
         id: String,
-        /// Tool name (`mcp__{server}__{tool}` for bridge tools).
+        /// Tool name (`mcp__{server}__{tool}` for MCP tools).
         name: String,
     },
     /// Thinking blocks and future kinds.

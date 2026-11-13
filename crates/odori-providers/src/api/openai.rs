@@ -12,13 +12,13 @@
 
 use async_trait::async_trait;
 use odori_agents::provider::{
-    Effort, Provider, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
+    Provider, ReasoningEffort, SessionDirective, TurnError, TurnEvent, TurnEventSink, TurnOutcome,
     TurnRequest, TurnUsage,
 };
 use serde_json::{Value, json};
 
 use super::{
-    BridgeTools, MAX_HTTP_ATTEMPTS, api_key, backoff_delay, header_limit_status, is_transient,
+    MAX_HTTP_ATTEMPTS, McpToolClient, api_key, backoff_delay, header_limit_status, is_transient,
     read_sse, retry_after_hint, wait_out,
 };
 
@@ -84,9 +84,9 @@ impl OpenAiProvider {
     }
 }
 
-/// What one streamed Responses exchange produced.
+/// What one streamed Responses API response produced.
 #[derive(Debug, Default)]
-struct Exchange {
+struct ModelResponse {
     response_id: String,
     text: String,
     function_calls: Vec<(String, String, Value)>,
@@ -109,9 +109,9 @@ impl Provider for OpenAiProvider {
         events: TurnEventSink,
     ) -> Result<TurnOutcome, TurnError> {
         let key = api_key("OPENAI_API_KEY", "OpenAI Responses API")?;
-        let bridge = BridgeTools::resolve(&request.tooling)?;
-        let tools = match &bridge {
-            Some(bridge) => bridge.list().await?,
+        let mcp_client = McpToolClient::resolve(&request.tool_config)?;
+        let tools = match &mcp_client {
+            Some(mcp_client) => mcp_client.list().await?,
             None => Vec::new(),
         };
         let tool_defs: Vec<Value> = tools
@@ -134,7 +134,7 @@ impl Provider for OpenAiProvider {
         };
 
         let mut input: Value = json!(request.input);
-        // Effort validates before the first request leaves the process.
+        // ReasoningEffort validates before the first request leaves the process.
         let reasoning_effort = request.directives.effort.map(openai_effort).transpose()?;
         let mut total_input = 0_u64;
         let mut total_output = 0_u64;
@@ -170,13 +170,13 @@ impl Provider for OpenAiProvider {
                 }});
             }
 
-            let exchange = self
+            let response = self
                 .stream_once(&key, &body, &events, previous_response_id.as_deref())
                 .await?;
-            total_input += exchange.input_tokens;
-            total_output += exchange.output_tokens;
-            total_cached_input += exchange.cached_input_tokens;
-            total_reasoning_output += exchange.reasoning_output_tokens;
+            total_input += response.input_tokens;
+            total_output += response.output_tokens;
+            total_cached_input += response.cached_input_tokens;
+            total_reasoning_output += response.reasoning_output_tokens;
             let mut usage = TurnUsage::default();
             usage.input_tokens = Some(total_input);
             usage.output_tokens = Some(total_output);
@@ -184,16 +184,16 @@ impl Provider for OpenAiProvider {
             usage.reasoning_output_tokens = Some(total_reasoning_output);
             usage.duration = Some(started.elapsed());
             events.report_usage(usage);
-            if let Some(error) = exchange.status_error {
+            if let Some(error) = response.status_error {
                 return Err(TurnError::Api {
                     message: format!("the response ended in error: {error}"),
                 });
             }
-            previous_response_id = Some(exchange.response_id.clone());
+            previous_response_id = Some(response.response_id.clone());
 
-            if exchange.function_calls.is_empty() {
+            if response.function_calls.is_empty() {
                 let mut outcome =
-                    TurnOutcome::new(exchange.response_id.clone(), exchange.text.clone());
+                    TurnOutcome::new(response.response_id.clone(), response.text.clone());
                 outcome.usage.input_tokens = Some(total_input);
                 outcome.usage.output_tokens = Some(total_output);
                 outcome.usage.cached_input_tokens = Some(total_cached_input);
@@ -202,15 +202,16 @@ impl Provider for OpenAiProvider {
                 return Ok(outcome);
             }
 
-            let Some(bridge) = &bridge else {
+            let Some(mcp_client) = &mcp_client else {
                 return Err(TurnError::Tooling {
-                    message: "the model requested a tool but no bridge is attached".to_owned(),
+                    message: "the model requested a tool but no mcp_server is configured"
+                        .to_owned(),
                 });
             };
             let mut outputs = Vec::new();
-            for (call_id, name, arguments) in &exchange.function_calls {
+            for (call_id, name, arguments) in &response.function_calls {
                 events.emit(TurnEvent::ToolUse { name: name.clone() });
-                let result = bridge.call(name, call_id, arguments).await?;
+                let result = mcp_client.call(name, call_id, arguments).await?;
                 let output = if result.is_error {
                     format!("ERROR: {}", result.text)
                 } else {
@@ -240,9 +241,9 @@ impl OpenAiProvider {
         body: &Value,
         events: &TurnEventSink,
         resumed_from: Option<&str>,
-    ) -> Result<Exchange, TurnError> {
+    ) -> Result<ModelResponse, TurnError> {
         let mut attempt = 0;
-        let response = loop {
+        let http_response = loop {
             events.emit(TurnEvent::Liveness);
             let sent = self
                 .http
@@ -278,7 +279,7 @@ impl OpenAiProvider {
         };
 
         let limit = header_limit_status(
-            response.headers(),
+            http_response.headers(),
             "x-ratelimit-remaining-requests",
             "x-ratelimit-remaining-tokens",
         );
@@ -286,43 +287,43 @@ impl OpenAiProvider {
             events.emit(TurnEvent::LimitObserved { limit });
         }
 
-        let mut exchange = Exchange::default();
-        read_sse(response, |frame| {
+        let mut response = ModelResponse::default();
+        read_sse(http_response, |frame| {
             let Ok(data) = serde_json::from_str::<Value>(&frame.data) else {
                 return;
             };
             match frame.event.as_str() {
                 "response.output_text.delta" => {
                     if let Some(delta) = data["delta"].as_str() {
-                        exchange.text.push_str(delta);
+                        response.text.push_str(delta);
                     }
                 }
                 "response.completed" => {
-                    let response = &data["response"];
-                    exchange.response_id = response["id"].as_str().unwrap_or_default().to_owned();
-                    exchange.input_tokens = response
+                    let payload = &data["response"];
+                    response.response_id = payload["id"].as_str().unwrap_or_default().to_owned();
+                    response.input_tokens = payload
                         .pointer("/usage/input_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    exchange.output_tokens = response
+                    response.output_tokens = payload
                         .pointer("/usage/output_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    exchange.cached_input_tokens = response
+                    response.cached_input_tokens = payload
                         .pointer("/usage/input_tokens_details/cached_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    exchange.reasoning_output_tokens = response
+                    response.reasoning_output_tokens = payload
                         .pointer("/usage/output_tokens_details/reasoning_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    for item in response["output"].as_array().into_iter().flatten() {
+                    for item in payload["output"].as_array().into_iter().flatten() {
                         if item["type"] == "function_call" {
                             let arguments = item["arguments"]
                                 .as_str()
                                 .and_then(|raw| serde_json::from_str(raw).ok())
                                 .unwrap_or_else(|| item["arguments"].clone());
-                            exchange.function_calls.push((
+                            response.function_calls.push((
                                 item["call_id"].as_str().unwrap_or_default().to_owned(),
                                 item["name"].as_str().unwrap_or_default().to_owned(),
                                 arguments,
@@ -331,7 +332,7 @@ impl OpenAiProvider {
                     }
                 }
                 "error" => {
-                    exchange.status_error =
+                    response.status_error =
                         Some(data["message"].as_str().unwrap_or("unspecified").to_owned());
                 }
                 _ => {}
@@ -339,7 +340,7 @@ impl OpenAiProvider {
             events.emit(TurnEvent::Liveness);
         })
         .await?;
-        Ok(exchange)
+        Ok(response)
     }
 }
 
@@ -376,18 +377,18 @@ fn classify_status(
 /// model accepts is the API's per-model contract, and a rejection comes
 /// back as a typed configuration error through [`classify_status`]. `max`
 /// exists on no OpenAI surface, so it fails typed before any request.
-fn openai_effort(effort: Effort) -> Result<&'static str, TurnError> {
+fn openai_effort(effort: ReasoningEffort) -> Result<&'static str, TurnError> {
     match effort {
-        Effort::None
-        | Effort::Minimal
-        | Effort::Low
-        | Effort::Medium
-        | Effort::High
-        | Effort::XHigh => Ok(effort.as_str()),
-        Effort::Max => Err(TurnError::Config {
+        ReasoningEffort::None
+        | ReasoningEffort::Minimal
+        | ReasoningEffort::Low
+        | ReasoningEffort::Medium
+        | ReasoningEffort::High
+        | ReasoningEffort::XHigh => Ok(effort.as_str()),
+        ReasoningEffort::Max => Err(TurnError::Config {
             message: "the OpenAI Responses API has no `max` reasoning effort; its ladder \
                       tops out at xhigh (model-dependent) — configure the agent with \
-                      Effort::XHigh or leave effort unset for the model default"
+                      ReasoningEffort::XHigh or leave effort unset for the model default"
                 .to_owned(),
         }),
     }
@@ -400,16 +401,16 @@ mod tests {
     #[test]
     fn effort_passes_the_ladder_verbatim_and_rejects_max_typed() {
         for (level, wire) in [
-            (Effort::None, "none"),
-            (Effort::Minimal, "minimal"),
-            (Effort::Low, "low"),
-            (Effort::Medium, "medium"),
-            (Effort::High, "high"),
-            (Effort::XHigh, "xhigh"),
+            (ReasoningEffort::None, "none"),
+            (ReasoningEffort::Minimal, "minimal"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::XHigh, "xhigh"),
         ] {
             assert_eq!(openai_effort(level).expect("level passes"), wire);
         }
-        match openai_effort(Effort::Max) {
+        match openai_effort(ReasoningEffort::Max) {
             Err(TurnError::Config { message }) => assert!(message.contains("xhigh")),
             other => panic!("expected a typed configuration error, got {other:?}"),
         }

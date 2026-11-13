@@ -1,30 +1,30 @@
 //! The call broker: one MCP `tools/call` turned into one workflow update,
 //! with keepalive progress while it runs.
 //!
-//! This is the bridge's core minus HTTP: [`UpdateClient`] abstracts the
+//! This is the MCP tool server's core minus HTTP: [`ToolCallDispatcher`] abstracts the
 //! workflow-update submission (the real client wraps the SDK; tests supply
 //! a fake with controllable completion ordering), and [`CallBroker::call`]
 //! is the only path a result can travel — which makes record-before-respond
-//! (Property 2) structural: the broker returns exactly and only what a
+//! structural: the broker returns exactly and only what a
 //! *completed* update carried, and the update completes only after its
 //! effects are in workflow history (`odori-agents`' handler contract).
 
 use std::{fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use odori_agents::run::{AgentRun, ToolInvocation, ToolInvocationReply};
+use odori_agents::run::{AgentRun, ToolCallReply, ToolCallRequest};
 use temporalio_client::{Client, WorkflowExecuteUpdateOptions};
 use thiserror::Error;
 
-/// Submits `tool_invoked` updates to a run's workflow.
+/// Dispatches tool calls to a run and observes its completion for token cleanup.
 #[async_trait]
-pub trait UpdateClient: fmt::Debug + Send + Sync + 'static {
-    /// Execute the update to completion and return its reply.
-    async fn tool_invoked(
+pub trait ToolCallDispatcher: fmt::Debug + Send + Sync + 'static {
+    /// Dispatch one tool call and await its reply.
+    async fn dispatch(
         &self,
         workflow_id: &str,
-        invocation: ToolInvocation,
-    ) -> Result<ToolInvocationReply, BridgeError>;
+        tool_call: ToolCallRequest,
+    ) -> Result<ToolCallReply, McpToolServerError>;
 
     /// Wait until `workflow_id` reaches a terminal workflow outcome.
     ///
@@ -36,13 +36,13 @@ pub trait UpdateClient: fmt::Debug + Send + Sync + 'static {
     }
 }
 
-/// The production [`UpdateClient`]: the SDK client against the engine.
+/// The production [`ToolCallDispatcher`]: the SDK client against the engine.
 #[derive(Debug, Clone)]
-pub struct WorkflowUpdateClient {
+pub struct WorkflowToolCallDispatcher {
     client: Client,
 }
 
-impl WorkflowUpdateClient {
+impl WorkflowToolCallDispatcher {
     /// Wrap a connected SDK client.
     pub fn new(client: Client) -> Self {
         Self { client }
@@ -50,21 +50,21 @@ impl WorkflowUpdateClient {
 }
 
 #[async_trait]
-impl UpdateClient for WorkflowUpdateClient {
-    async fn tool_invoked(
+impl ToolCallDispatcher for WorkflowToolCallDispatcher {
+    async fn dispatch(
         &self,
         workflow_id: &str,
-        invocation: ToolInvocation,
-    ) -> Result<ToolInvocationReply, BridgeError> {
+        tool_call: ToolCallRequest,
+    ) -> Result<ToolCallReply, McpToolServerError> {
         self.client
             .get_workflow_handle::<AgentRun>(workflow_id)
             .execute_update(
                 AgentRun::tool_invoked,
-                invocation,
+                tool_call,
                 WorkflowExecuteUpdateOptions::default(),
             )
             .await
-            .map_err(|error| BridgeError::Engine {
+            .map_err(|error| McpToolServerError::Engine {
                 message: error.to_string(),
             })
     }
@@ -86,7 +86,7 @@ impl UpdateClient for WorkflowUpdateClient {
                     tracing::warn!(
                         workflow_id,
                         %error,
-                        "could not observe workflow terminal state; retaining bridge tokens"
+                        "could not observe workflow terminal state; retaining MCP tokens"
                     );
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
@@ -99,7 +99,7 @@ impl UpdateClient for WorkflowUpdateClient {
 /// pending, return its reply.
 #[derive(Debug, Clone)]
 pub struct CallBroker {
-    client: Arc<dyn UpdateClient>,
+    dispatcher: Arc<dyn ToolCallDispatcher>,
     keepalive: Duration,
 }
 
@@ -107,26 +107,28 @@ impl CallBroker {
     /// A broker emitting keepalive ticks every `keepalive` while a call is
     /// pending. The cadence must sit strictly below the harness's MCP
     /// timeout pinned at spawn.
-    pub fn new(client: Arc<dyn UpdateClient>, keepalive: Duration) -> Self {
-        Self { client, keepalive }
+    pub fn new(dispatcher: Arc<dyn ToolCallDispatcher>, keepalive: Duration) -> Self {
+        Self {
+            dispatcher,
+            keepalive,
+        }
     }
 
     pub(crate) async fn wait_for_terminal(&self, workflow_id: &str) {
-        self.client.wait_for_terminal(workflow_id).await;
+        self.dispatcher.wait_for_terminal(workflow_id).await;
     }
 
     /// Execute one call. `on_progress` fires every keepalive interval while
     /// the update is pending (the server layer turns each tick into an MCP
     /// progress notification); the return value is the completed update's
-    /// reply, and nothing else can be returned — Property 2 by
-    /// construction.
+    /// reply, and nothing else can be returned.
     pub async fn call(
         &self,
         workflow_id: &str,
-        invocation: ToolInvocation,
+        tool_call: ToolCallRequest,
         mut on_progress: impl FnMut() + Send,
-    ) -> Result<ToolInvocationReply, BridgeError> {
-        let update = self.client.tool_invoked(workflow_id, invocation);
+    ) -> Result<ToolCallReply, McpToolServerError> {
+        let update = self.dispatcher.dispatch(workflow_id, tool_call);
         tokio::pin!(update);
         let mut ticker = tokio::time::interval(self.keepalive);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -142,30 +144,30 @@ impl CallBroker {
     }
 }
 
-/// Bridge-level failures (the spec's error table, bridge column). Distinct
+/// MCP tool server infrastructure failures. Distinct
 /// from tool failures, which travel inside a successful reply as
 /// `isError: true` results.
 #[derive(Debug, Clone, Error)]
 #[non_exhaustive]
-pub enum BridgeError {
+pub enum McpToolServerError {
     /// Missing or invalid bearer token; rejected before any processing.
     #[error("unauthorized")]
     Unauthorized,
-    /// An MCP surface the bridge does not serve (resources, prompts, …).
+    /// An MCP surface the MCP tool server does not serve (resources, prompts, …).
     #[error("unsupported method: {method}")]
     Unsupported {
         /// The JSON-RPC method requested.
         method: String,
     },
-    /// Malformed invocation (empty call id, non-object arguments, bad
+    /// Malformed tool call (empty call id, non-object arguments, bad
     /// frame).
-    #[error("bad invocation: {message}")]
+    #[error("bad tool_call: {message}")]
     BadInvocation {
         /// What was malformed.
         message: String,
     },
     /// The update path failed: engine unreachable, serialization fault.
-    /// The turn activity observing this fails retryable (Requirement 6.4).
+    /// The turn activity observing this fails retryable.
     #[error("engine update failed: {message}")]
     Engine {
         /// Underlying error text.

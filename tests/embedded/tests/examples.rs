@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, ensure};
-use odori_agents::{Agent, AgentRegistry, Providers, RunConfig};
+use odori_agents::{Agent, AgentRegistry, ProviderRegistry, RunConfig};
 use odori_embedded_harness::start_engine;
 use odori_engine::{ConnectTarget, OdoriRuntime};
 use odori_examples::{approval_resume, rewind, slice_fleet};
@@ -162,7 +162,8 @@ async fn live_cross_provider_example_smoke() -> Result<()> {
         .connect(ConnectTarget::service_override(engine.service_override()))
         .agents(agents)
         .providers(
-            Providers::new(Arc::new(ClaudeProvider::new())).with(Arc::new(CodexProvider::new())),
+            ProviderRegistry::new(Arc::new(ClaudeProvider::new()))
+                .with(Arc::new(CodexProvider::new())),
         )
         .start()
         .await?;
